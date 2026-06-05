@@ -44,7 +44,27 @@ export function runDecision(
   const trust = computeTrust(input, config.trust, firedBotSignals);
 
   // A hard confession is immune: a bot doesn't get cleared by good behaviour.
-  const netSuspicion = forced ? 1 : clamp01(botScore - config.trust.offsetFactor * trust.score);
+  // The offset uses `offsetScore` (forgeable credit capped), NOT the full
+  // `trust.score`: organic-looking but JS-supplied evidence can shed a moderate
+  // presumption (VPN/datacenter) but can't whitewash a strong/stacked server
+  // signal (TLS↔UA lie, Tor, accumulation) down to 'human'. The full score still
+  // governs the positive 'human' label below.
+  const rawNet = clamp01(botScore - config.trust.offsetFactor * trust.offsetScore);
+  // Block-level cap: when a server-side signal on its own reached the block
+  // threshold (a TLS↔UA lie stacked with a datacenter, a Tor exit, a reputation
+  // swarm), the NON-forgeable residential slice must not stack ON TOP of the
+  // forgeable cap to buy a bot→suspect downgrade — that would let a residential
+  // botnet (reputation maxed) escape just by originating from a residential IP.
+  // So we cap the TOTAL offset at `maxForgeableOffset` here, rather than flooring
+  // the verdict outright: this neutralises the residential overreach while still
+  // letting a genuine VPN human whose ASN trips two server signals (datacenter +
+  // proxy = block) keep the moderate forgeable offset → 'suspect', not 'bot'.
+  const cappedOffset = Math.min(trust.offsetScore, config.trust.maxForgeableOffset);
+  const netSuspicion = forced
+    ? 1
+    : botScore >= config.aggregate.block
+      ? clamp01(botScore - config.trust.offsetFactor * cappedOffset)
+      : rawNet;
 
   let verdict: Verdict;
   if (byLevel.length === 0 && trust.signals.length === 0) {
@@ -53,7 +73,15 @@ export function runDecision(
     verdict = 'bot';
   } else if (netSuspicion >= config.aggregate.review) {
     verdict = 'suspect';
-  } else if (trust.score >= config.trust.humanThreshold && (!config.trust.requireLiveness || trust.liveness)) {
+  } else if (
+    trust.score >= config.trust.humanThreshold &&
+    (!config.trust.requireLiveness || trust.liveness) &&
+    // The liveness anchor (organic behaviour) is itself client-forgeable, so it
+    // must not mint 'human' on its own: require at least one INDEPENDENT trust
+    // signal (identity coherence, real GPU, residential IP…). A lone forged
+    // behavioural blob earns 'clean', not 'human'.
+    trust.corroborated
+  ) {
     verdict = 'human';
   } else {
     verdict = 'clean';

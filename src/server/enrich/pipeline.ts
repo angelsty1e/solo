@@ -90,7 +90,7 @@ function seed(s: IpEnrichSeed): IpFingerprint {
     asnOrganization: null,
     country: null,
     isDatacenter: null,
-    isProxyHint: false,
+    isProxyHint: null,
     reverseDns: null,
     isTorExit: null,
     tcpRttMs: s.tcpRttMs,

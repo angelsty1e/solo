@@ -111,11 +111,18 @@ export interface LevelConfig {
 // how much the credit subtracts from accumulated suspicion; `humanThreshold` is
 // the minimum credit to earn the positive 'human' verdict; `requireLiveness`
 // gates 'human' on behavioural evidence (passive-only credit caps at 'clean').
+// `maxForgeableOffset` caps how much *client-forgeable* trust (everything a bot
+// can replicate in its JS payload) may cancel from server-side suspicion: it
+// lets a real human shed one moderate presumption (a VPN, a datacenter IP) yet
+// keeps a forged payload from whitewashing a strong/stacked server signal (a
+// TLS↔UA lie, Tor, accumulation) down to 'human'. Non-forgeable credit (e.g. a
+// residential IP, observed server-side) is not subject to this cap.
 export interface TrustConfig {
   weights: Record<string, number>;
   offsetFactor: number;
   humanThreshold: number;
   requireLiveness: boolean;
+  maxForgeableOffset: number;
 }
 
 export interface DecisionConfig {
@@ -139,9 +146,13 @@ export interface SignalDef {
 
 // Trust signal: returns positive evidence when the pro-human condition holds.
 // `liveness` flags the behavioural-vivacity anchor (gates the 'human' verdict).
+// `clientForgeable` marks a signal whose evidence comes entirely from the JS
+// payload (so a bot can fabricate it). Forgeable credit is summed and capped by
+// `TrustConfig.maxForgeableOffset` before it can offset suspicion (see trust.ts).
 export interface TrustSignalDef {
   id: string;
   label: string;
   liveness?: boolean;
+  clientForgeable?: boolean;
   detect: (input: DecisionInput, firedBotSignals: ReadonlySet<string>) => string[] | null;
 }

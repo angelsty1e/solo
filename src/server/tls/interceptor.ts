@@ -16,19 +16,38 @@ import { computeJa4 } from './ja4.js';
 //
 // Instead we run a transparent TCP proxy: the public listener captures the first
 // chunk for fingerprinting, then forwards every byte verbatim to an internal TLS
-// server on 127.0.0.1:<ephemeral>. The fingerprint is keyed by the upstream
-// socket's *localPort*, which is exactly what tls.Server sees as `remotePort` on
-// the incoming connection. The real client IP/port is kept in a side map so the
-// HTTP layer can recover it (since `req.ip` would otherwise show 127.0.0.1).
+// server on 127.0.0.1:<ephemeral>. The upstream socket's *localPort* is what
+// tls.Server sees as `remotePort`, so it's used only as a one-shot handoff key:
+// at 'secureConnection' the captured context (fingerprint, RTT, real client
+// IP/port) is moved onto the TLS socket object and the port entry is dropped.
+// Every later lookup is by socket identity, so a recycled ephemeral port can
+// never cross-attribute one connection's data to another.
 
 export interface RealRemote {
   addr: string;
   port: number;
 }
 
-const fpByUpPort = new Map<number, TlsFingerprint>();
-const rttByUpPort = new Map<number, number>();
-const remoteByUpPort = new Map<number, RealRemote>();
+// Per-connection context captured server-side from the ClientHello, plus the
+// real client IP/port and the measured TCP RTT.
+interface ConnContext {
+  fp: TlsFingerprint | null;
+  rttMs: number;
+  remote: RealRemote;
+}
+
+// Transient handoff map: populated at finalize() under the upstream loopback
+// localPort, consumed exactly once at 'secureConnection' and deleted there. The
+// upstream socket is still open at both moments, so the port is provably unique
+// for that window — no other connection can hold the same number between the set
+// and the consume.
+const pendingByUpPort = new Map<number, ConnContext>();
+// Authoritative store, keyed by the live TLS socket *object*. Object identity is
+// stable for the whole request and never recycled, unlike the ephemeral port —
+// this is what closes the cross-attribution race (the IP here feeds rate-limit
+// and reputation, so a stale mapping is a spoofing vector, not just a glitch).
+// WeakMap so a closed socket's entry is reclaimed by GC with no manual teardown.
+const ctxBySocket = new WeakMap<net.Socket, ConnContext>();
 
 // ─── Slowloris / buffer-exhaustion guards ────────────────────────────────────
 // Each in-flight connection buffers its (possibly fragmented) ClientHello —
@@ -85,6 +104,17 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
     });
 
     tlsServer.on('secureConnection', (tlsSocket) => {
+      // Move the captured context from the transient port map onto the socket
+      // object itself, then drop the port entry. From here on every lookup is by
+      // object identity, immune to ephemeral-port reuse.
+      const port = tlsSocket.remotePort;
+      if (typeof port === 'number') {
+        const ctx = pendingByUpPort.get(port);
+        if (ctx) {
+          pendingByUpPort.delete(port);
+          ctxBySocket.set(tlsSocket, ctx);
+        }
+      }
       httpServer.emit('connection', tlsSocket);
     });
 
@@ -152,11 +182,10 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
           if (n <= 0) connCountByIp.delete(realAddr);
           else connCountByIp.set(realAddr, n);
         }
-        if (upPort) {
-          fpByUpPort.delete(upPort);
-          rttByUpPort.delete(upPort);
-          remoteByUpPort.delete(upPort);
-        }
+        // Only the transient handoff entry can be orphaned here (if the socket
+        // dies before 'secureConnection' consumed it). The WeakMap entry, if
+        // already set, belongs to a live request and GC reclaims it on its own.
+        if (upPort) pendingByUpPort.delete(upPort);
         try {
           clientSocket.destroy();
         } catch {
@@ -200,10 +229,20 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
           let captured = false;
           let captureTimer: NodeJS.Timeout | null = null;
 
-          const hasFullRecord = (buf: Buffer): boolean => {
-            if (buf.length < 5) return false;
-            if (buf[0] !== 0x16) return true; // not a handshake record → don't wait
-            return buf.length >= 5 + buf.readUInt16BE(3);
+          // Incremental completeness: the old code ran `Buffer.concat(chunks)` on
+          // EVERY data event, so a hello fragmented into N 1-byte segments cost
+          // O(N²) CPU + allocations (a cheap pre-auth DoS, one per connection up to
+          // the per-IP cap). Instead, parse the 5-byte record header ONCE — the
+          // moment we have ≥5 bytes — to learn the total length, then compare the
+          // running byte count. O(1) per chunk; the lone concat in the rare
+          // header-split case runs at most once.
+          let needTotal = -1; // bytes required for a full first record; -1 until header seen
+          const updateNeed = () => {
+            if (needTotal >= 0 || total < 5) return;
+            const first = chunks[0]!;
+            const head = first.length >= 5 ? first : Buffer.concat(chunks).subarray(0, 5);
+            // Not a handshake record (port scan / garbage): forward as-is, don't wait.
+            needTotal = head[0] !== 0x16 ? 5 : 5 + head.readUInt16BE(3);
           };
 
           const finalize = () => {
@@ -220,15 +259,13 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
 
             const hello = Buffer.concat(chunks, total);
             const rttMs = Number(process.hrtime.bigint() - connectedAt) / 1_000_000;
-            rttByUpPort.set(upPort, rttMs);
-            remoteByUpPort.set(upPort, { addr: realAddr, port: realPort });
-
             const fp = buildFingerprint(hello);
-            if (fp) {
-              fpByUpPort.set(upPort, fp);
-            } else {
+            if (!fp) {
               logger?.warn?.('clientHello parse failed', hello.subarray(0, 16).toString('hex'));
             }
+            // Stash under the upstream port; 'secureConnection' moves it onto the
+            // TLS socket object and deletes this entry.
+            pendingByUpPort.set(upPort, { fp, rttMs, remote: { addr: realAddr, port: realPort } });
 
             // Forward the captured bytes, then pipe both directions transparently.
             upstream!.write(hello);
@@ -253,7 +290,8 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
             totalCaptureBytes += chunk.length;
             // Bound the wait for a fragmented hello; forward what we have at 1.5s.
             if (!captureTimer) captureTimer = setTimeout(finalize, 1500);
-            if (hasFullRecord(Buffer.concat(chunks, total)) || total >= FIRST_RECORD_CAP) {
+            updateNeed();
+            if ((needTotal >= 0 && total >= needTotal) || total >= FIRST_RECORD_CAP) {
               finalize();
             }
           };
@@ -280,34 +318,33 @@ export function getFingerprintForSocket(
   socket: net.Socket | tls.TLSSocket | null | undefined,
 ): TlsFingerprint | null {
   if (!socket) return null;
-  if (socket instanceof tls.TLSSocket) {
-    const port = socket.remotePort;
-    if (typeof port === 'number') return fpByUpPort.get(port) ?? null;
-  }
-  return null;
+  return ctxBySocket.get(socket)?.fp ?? null;
 }
 
 export function getRttForSocket(
   socket: net.Socket | tls.TLSSocket | null | undefined,
 ): number | null {
   if (!socket) return null;
-  if (socket instanceof tls.TLSSocket) {
-    const port = socket.remotePort;
-    if (typeof port === 'number') {
-      const v = rttByUpPort.get(port);
-      return typeof v === 'number' ? v : null;
-    }
-  }
-  return null;
+  const v = ctxBySocket.get(socket)?.rttMs;
+  return typeof v === 'number' ? v : null;
 }
 
 export function getRealRemoteForSocket(
   socket: net.Socket | tls.TLSSocket | null | undefined,
 ): RealRemote | null {
   if (!socket) return null;
-  if (socket instanceof tls.TLSSocket) {
-    const port = socket.remotePort;
-    if (typeof port === 'number') return remoteByUpPort.get(port) ?? null;
-  }
-  return null;
+  return ctxBySocket.get(socket)?.remote ?? null;
+}
+
+// Rate-limit key: the real client IP when known, else a per-connection-unique
+// token (the loopback ephemeral port). NEVER a shared constant like `req.ip`
+// (always 127.0.0.1 behind the internal proxy) — pooling every unkeyable request
+// into one bucket lets a single client drain the budget for everyone (DoS) or
+// slip its count by flip-flopping in and out of the shared bucket. Every real
+// request rides a TLS socket whose remote is resolved at 'secureConnection', so
+// a missing IP is anomalous; isolating it per connection fails safe.
+export function rateLimitKeyForSocket(socket: net.Socket | tls.TLSSocket | null | undefined): string {
+  const real = getRealRemoteForSocket(socket);
+  if (real?.addr) return real.addr;
+  return `noip:${socket?.remotePort ?? 'unknown'}`;
 }

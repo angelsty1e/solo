@@ -112,13 +112,16 @@ const PROXY_KEYWORDS = [
 export function classifyAsn(
   orgName: string | null,
   asn?: number | null,
-): { isDatacenter: boolean | null; isProxyHint: boolean } {
+): { isDatacenter: boolean | null; isProxyHint: boolean | null } {
   const dcByNumber = asn != null && DATACENTER_ASNS.has(asn);
   const vpnByNumber = asn != null && VPN_ASNS.has(asn);
 
-  // Number match alone is enough to classify, even without an org name.
+  // Without an org name we can only POSITIVELY assert via the ASN number; the
+  // absence of a match is "unknown" (null), not "definitely not". Symmetric for
+  // both flags — otherwise a GeoIP-down lookup would masquerade as a confirmed
+  // residential IP and hand a bot the non-forgeable trust credit (see trust.ts).
   if (!orgName) {
-    return { isDatacenter: dcByNumber ? true : null, isProxyHint: vpnByNumber };
+    return { isDatacenter: dcByNumber ? true : null, isProxyHint: vpnByNumber ? true : null };
   }
 
   const lower = orgName.toLowerCase();

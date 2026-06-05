@@ -48,7 +48,10 @@ export interface IpFingerprint {
   asnOrganization: string | null;
   country: string | null;
   isDatacenter: boolean | null;
-  isProxyHint: boolean;
+  // null = unknown (GeoIP down / ASN unresolved), NOT "definitely not a proxy".
+  // trust_residential_ip only credits a *positively* residential IP (datacenter
+  // and proxy both === false), never an unresolved one — see trust.ts.
+  isProxyHint: boolean | null;
   reverseDns: string | null;
   isTorExit: boolean | null;
   tcpRttMs: number | null;

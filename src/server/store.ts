@@ -225,17 +225,27 @@ export function upsertDecision(sessionId: string, decision: DecisionResult): voi
 }
 
 // Cross-session reputation of a canvas+WebGL fingerprint within the retention
-// window (~TTL). Counts DISTINCT IPs (robust to one user re-scanning). Returns
-// zeros when the fingerprint is missing (blocked/randomised) → no judgement.
+// window (~TTL). Counts DISTINCT IPs (robust to one user re-scanning).
+//
+// We judge as soon as AT LEAST ONE rendering surface is present. Requiring BOTH
+// (the old behaviour) let a bot evade reputation entirely just by nulling a
+// single surface — e.g. `canvas: null` while still sending `webgl` for its GPU
+// trust credit — without tripping env_render_surfaces_absent (which needs all
+// three surfaces null). The match is null-safe on BOTH columns (`IS ?`, a null
+// is a value, not a wildcard), so the composite identity is the exact pair
+// `(canvas, webgl)`: a swarm that consistently omits the same surface still
+// collides with itself, while a session keeps its full precision when both are
+// present. Both-null = every surface blocked/randomised → no judgement (we don't
+// lump privacy-hardened humans into one bucket), as before.
 export function fingerprintReputation(canvasHash: string | null, webglHash: string | null): ReputationStats {
-  if (!canvasHash || !webglHash) return { fpDistinctIps: 0, fpTotalSessions: 0 };
+  if (!canvasHash && !webglHash) return { fpDistinctIps: 0, fpTotalSessions: 0 };
   const db = getDb();
   const since = nowMs() - TTL_MS;
   const row = db
     .prepare(
       `SELECT COUNT(DISTINCT ip) AS d, COUNT(*) AS t
        FROM sessions
-       WHERE canvas_hash = ? AND webgl_hash = ? AND ip IS NOT NULL AND created_at >= ?`,
+       WHERE canvas_hash IS ? AND webgl_hash IS ? AND ip IS NOT NULL AND created_at >= ?`,
     )
     .get(canvasHash, webglHash, since) as { d: number; t: number };
   return { fpDistinctIps: row.d, fpTotalSessions: row.t };

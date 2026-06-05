@@ -35,6 +35,12 @@ export function evaluateCards(full: FullFingerprint, decision: DecisionResult): 
   if (l1?.forced) {
     const tells = l1.hits.filter((h) => h.severity === 'hard').map((h) => h.label);
     out.push(card('automation', 'bot', `Aveu direct : ${tells.join(', ')}`));
+  } else if (l1?.verdict === 'bot') {
+    // Soft signals can accumulate to the block threshold without a hard override
+    // (forced=false). The card must follow the *verdict*, not just `forced`: a
+    // level that scored 'bot' is red, never the orange 'unknown' below.
+    const tells = l1.hits.map((h) => h.label);
+    out.push(card('automation', 'bot', `Accumulation de signaux d'automatisation : ${tells.join(', ')}.`));
   } else if (l1 && l1.verdict !== 'clean') {
     const tells = l1.hits.map((h) => h.label);
     out.push(card('automation', 'unknown', `Signaux faibles : ${tells.join(', ')}.`));
@@ -63,9 +69,15 @@ export function evaluateCards(full: FullFingerprint, decision: DecisionResult): 
   if (ip) {
     const tor = hit('ip_tor');
     const dc = hit('ip_datacenter') ?? hit('ip_proxy') ?? hit('rdns_hosting');
+    // Positively residential = GeoIP confirms not-datacenter & not-proxy; a
+    // missing Tor list (isTorExit===null) is fine, only a real Tor exit isn't.
+    const positivelyResidential = ip.isDatacenter === false && ip.isProxyHint === false && ip.isTorExit !== true;
     if (tor) out.push(card('ip', 'bot', 'Nœud de sortie Tor.'));
     else if (dc) out.push(card('ip', 'unknown', dc.evidence.join(' ; ')));
-    else out.push(card('ip', 'human', 'IP résidentielle probable.'));
+    else if (positivelyResidential) out.push(card('ip', 'human', 'IP résidentielle probable.'));
+    // Provenance unresolved (GeoIP down / ASN not found): no signal fired but we
+    // can't positively call it residential either → stay 'unknown', don't fake green.
+    else out.push(card('ip', 'unknown', 'Provenance réseau indéterminée (enrichissement IP indisponible).'));
   }
 
   // ── Matériel / WebGL — GPU logiciel = headless ────────────────────────────

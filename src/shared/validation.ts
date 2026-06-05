@@ -12,6 +12,16 @@ import { z } from 'zod';
 // absurd values a hostile client would use to skew scoring or bloat the DB.
 const dim = z.number().min(0).max(100_000);
 const count = z.number().min(0).max(1_000_000);
+// Behavioural aggregates feed the decision engine's detect() thresholds. A bare
+// z.number() accepts Infinity/NaN, which slip through and silently flip those
+// conditions (e.g. meanCurvature=Infinity > 0 grants the liveness credit;
+// linearRatio=Infinity >= 0.99 fires the synthetic-scroll signal). Bound them:
+//   ratio  → a proportion, must be finite and within [0,1].
+//   metric → a non-negative magnitude (speed, std, time…), must be finite.
+//   signed → may be negative (scroll delta direction), must be finite.
+const ratio = z.number().min(0).max(1);
+const metric = z.number().finite().min(0);
+const signed = z.number().finite();
 
 const uaDataSchema = z
   .object({
@@ -271,32 +281,32 @@ const behavioralSchema = z.object({
   mouse: z.object({
     moves: count,
     clicks: count,
-    meanSpeed: z.number(),
-    stdSpeed: z.number(),
-    meanCurvature: z.number(),
-    stillRatio: z.number(),
-    jitterRatio: z.number(),
+    meanSpeed: metric,
+    stdSpeed: metric,
+    meanCurvature: metric,
+    stillRatio: ratio,
+    jitterRatio: ratio,
   }),
   keyboard: z.object({
     keydowns: count,
     keyups: count,
-    meanDwellMs: z.number(),
-    stdDwellMs: z.number(),
-    meanFlightMs: z.number(),
-    stdFlightMs: z.number(),
-    backspaceRatio: z.number(),
+    meanDwellMs: metric,
+    stdDwellMs: metric,
+    meanFlightMs: metric,
+    stdFlightMs: metric,
+    backspaceRatio: ratio,
   }),
   scroll: z.object({
     events: count,
-    totalDeltaPx: z.number(),
-    meanDeltaPx: z.number(),
-    linearRatio: z.number(),
+    totalDeltaPx: signed,
+    meanDeltaPx: signed,
+    linearRatio: ratio,
   }),
   touch: z.object({
     starts: count,
     moves: count,
     ends: count,
-    meanPressure: z.number(),
+    meanPressure: metric,
     multiTouchMax: count,
   }),
 });

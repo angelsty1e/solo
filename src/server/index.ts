@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
-import { createInterceptedServerFactory, getRealRemoteForSocket } from './tls/interceptor.js';
+import { createInterceptedServerFactory, rateLimitKeyForSocket } from './tls/interceptor.js';
 import { registerRoutes } from './routes.js';
 import { initGeoIp, geoIpStatus } from './enrich/geoip.js';
 import { initCountryDb, countryDbStatus } from './enrich/country.js';
@@ -102,8 +102,9 @@ async function main() {
     hsts: false,
   });
 
-  // Basic abuse protection. Keyed by the real client IP (req.ip is always
-  // 127.0.0.1 because of the internal TCP proxy). /healthz is NOT exempted:
+  // Basic abuse protection. Keyed by the real client IP recovered from the proxy
+  // side-map (req.ip is always 127.0.0.1 here); an unkeyable request falls back
+  // to a per-connection token, never a shared bucket. /healthz is NOT exempted:
   // the Docker healthcheck polls it every 30s (~2/min), far under the 120/min
   // budget, so keeping it rate-limited closes a free unauthenticated recon /
   // amplification endpoint without affecting health polling.
@@ -111,7 +112,7 @@ async function main() {
     global: true,
     max: 120,
     timeWindow: '1 minute',
-    keyGenerator: (req) => getRealRemoteForSocket(req.raw.socket as never)?.addr ?? req.ip,
+    keyGenerator: (req) => rateLimitKeyForSocket(req.raw.socket as never),
   });
 
   // Centralized error handler: log the full error server-side, but never leak

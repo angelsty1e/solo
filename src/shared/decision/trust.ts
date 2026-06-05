@@ -24,6 +24,7 @@ export const TRUST_SIGNALS: TrustSignalDef[] = [
     id: 'trust_behavior_human',
     label: 'Comportement organique (souris / clavier)',
     liveness: true, // the vivacity anchor
+    clientForgeable: true, // behavioural metrics come from the JS payload
     detect: (i) => {
       const b = i.client?.behavioral;
       if (!b) return null;
@@ -44,6 +45,7 @@ export const TRUST_SIGNALS: TrustSignalDef[] = [
   {
     id: 'trust_identity_coherent',
     label: 'Identité cohérente sur toutes les sources',
+    clientForgeable: true, // navigator/UA/client-hints are all JS-supplied
     detect: (i, fired) => {
       const nav = i.client?.navigator;
       const ua = i.userAgent ?? '';
@@ -56,6 +58,7 @@ export const TRUST_SIGNALS: TrustSignalDef[] = [
   {
     id: 'trust_hardware_gpu',
     label: 'GPU matériel réel',
+    clientForgeable: true, // WebGL renderer string is JS-readable/spoofable
     detect: (i) => {
       const g = i.client?.webgl;
       const r = g?.unmaskedRenderer ?? g?.renderer ?? '';
@@ -65,6 +68,7 @@ export const TRUST_SIGNALS: TrustSignalDef[] = [
   {
     id: 'trust_hw_video_decode',
     label: 'Décodage vidéo accéléré',
+    clientForgeable: true, // mediaCapabilities is reported by client JS
     detect: (i) => {
       const m = i.client?.mediaCapabilities;
       if (!m || !m.available) return null;
@@ -75,6 +79,7 @@ export const TRUST_SIGNALS: TrustSignalDef[] = [
   {
     id: 'trust_fonts_rich',
     label: 'Bibliothèque de polices riche',
+    clientForgeable: true, // font list is enumerated/reported by client JS
     detect: (i) => {
       const f = i.client?.fonts;
       if (!f) return null;
@@ -90,6 +95,7 @@ export const TRUST_SIGNALS: TrustSignalDef[] = [
   {
     id: 'trust_speech_voices',
     label: 'Voix de synthèse présentes',
+    clientForgeable: true, // speechSynthesis voices come from client JS
     detect: (i) => {
       const sp = i.client?.speech;
       return sp?.available && sp.voiceCount > 0 ? [`${sp.voiceCount} voix de synthèse`] : null;
@@ -98,15 +104,28 @@ export const TRUST_SIGNALS: TrustSignalDef[] = [
   {
     id: 'trust_residential_ip',
     label: 'IP résidentielle',
+    // NOT forgeable: derived server-side from the observed IP / GeoIP, never
+    // from the JS payload. This is the one credit a bot can't fabricate, so it
+    // is exempt from the forgeable-offset cap.
     detect: (i) => {
       const ip = i.ip;
       if (!ip) return null;
-      return !ip.isDatacenter && !ip.isProxyHint && !ip.isTorExit ? ['IP résidentielle (ni datacenter, ni VPN, ni Tor)'] : null;
+      // Require GeoIP to POSITIVELY say not-datacenter AND not-proxy (strict
+      // === false): a null there means GeoIP is down / the ASN is unresolved, and
+      // truthiness (`!ip.isProxyHint`) would then credit an unknown IP as
+      // residential — handing a bot the one non-forgeable trust slice it can't
+      // otherwise fake. The Tor list is OPTIONAL, so isTorExit===null just means
+      // "no list loaded"; only a POSITIVE Tor exit (===true) disqualifies — a
+      // missing list must not silently void every residential credit.
+      return ip.isDatacenter === false && ip.isProxyHint === false && ip.isTorExit !== true
+        ? ['IP résidentielle (ni datacenter, ni VPN, ni Tor)']
+        : null;
     },
   },
   {
     id: 'trust_media_devices',
     label: 'Périphériques média présents',
+    clientForgeable: true, // enumerateDevices counts come from client JS
     detect: (i) => {
       const md = i.client?.mediaDevices;
       if (!md || !md.available) return null;
@@ -117,9 +136,18 @@ export const TRUST_SIGNALS: TrustSignalDef[] = [
 ];
 
 export interface TrustResult {
-  score: number; // 0..1
+  score: number; // 0..1 — full credit, used for the positive 'human' label
+  offsetScore: number; // 0..1 — credit allowed to cancel suspicion (forgeable-capped)
   signals: TrustHit[];
   liveness: boolean; // a liveness (behavioural) signal fired
+  // At least one trust signal OTHER than the liveness anchor fired. The liveness
+  // anchor (organic behaviour) is itself client-forgeable — a bot can put any
+  // numbers in the JSON payload — so on its own it must NOT mint the positive
+  // 'human' label. Requiring an independent corroborating signal closes that
+  // (a lone forged behavioural blob earns 'clean', not 'human') without punishing
+  // a real VPN human, who still corroborates via identity/GPU even when no
+  // server-side credit (residential IP) is available. See runDecision.
+  corroborated: boolean;
 }
 
 export function computeTrust(
@@ -129,13 +157,23 @@ export function computeTrust(
 ): TrustResult {
   const signals: TrustHit[] = [];
   let liveness = false;
+  let corroborated = false;
+  // Sum forgeable and non-forgeable credit separately: the full sum earns the
+  // positive 'human' label, but only a capped slice of the *forgeable* part may
+  // offset server-side suspicion (a bot can replicate the whole client payload).
+  let forgeableSum = 0;
+  let trustedSum = 0;
   for (const def of TRUST_SIGNALS) {
     const evidence = def.detect(input, firedBotSignals);
     if (!evidence) continue;
     const weight = cfg.weights[def.id] ?? 0;
     signals.push({ id: def.id, label: def.label, weight, evidence });
     if (def.liveness) liveness = true;
+    else corroborated = true; // an independent (non-liveness) signal fired
+    if (def.clientForgeable) forgeableSum += weight;
+    else trustedSum += weight;
   }
-  const score = Math.min(1, signals.reduce((sum, s) => sum + s.weight, 0));
-  return { score, signals, liveness };
+  const score = Math.min(1, forgeableSum + trustedSum);
+  const offsetScore = Math.min(1, trustedSum + Math.min(forgeableSum, cfg.maxForgeableOffset));
+  return { score, offsetScore, signals, liveness, corroborated };
 }

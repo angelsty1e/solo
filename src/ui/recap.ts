@@ -29,7 +29,9 @@ function el(tag: string, props: Record<string, unknown> = {}, children: Array<No
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(props)) {
     if (k === 'class') node.className = String(v);
-    else if (k === 'html') node.innerHTML = String(v);
+    // No `innerHTML` branch: everything renders via children/textContent so a
+    // fingerprint value (UA, JA4, renderer, evidence…) can never be parsed as
+    // HTML. Removed the dead 'html' prop that was a latent injection foot-gun.
     else node.setAttribute(k, String(v));
   }
   for (const c of children) {
@@ -318,24 +320,33 @@ function verdictCard(full: FullFingerprint): HTMLElement | null {
   };
   const v = map[d.verdict] ?? map.unknown!;
 
+  // A decision persisted by an older engine (or a partial blob) may be missing
+  // fields the type says are required. Normalise to safe defaults up front so a
+  // single absent field renders a degraded-but-complete card instead of throwing
+  // and taking the WHOLE recap down via render()'s catch-all.
+  const score = d.score ?? 0;
+  const trustScore = d.trustScore ?? 0;
+  const trustSignals = d.trustSignals ?? [];
+  const byLevel = d.byLevel ?? [];
+
   const wrap = el('section', { class: 'exposure' });
   wrap.appendChild(el('h2', {}, ['Verdict']));
 
   const head = el('div', { class: 'badges' });
   head.appendChild(badge(v.label, v.kind));
-  head.appendChild(badge(`suspicion ${Math.round(d.score * 100)} / 100`, 'neutral'));
-  if ((d.trustScore ?? 0) > 0) head.appendChild(badge(`confiance ${Math.round(d.trustScore * 100)} / 100`, 'ok'));
+  head.appendChild(badge(`suspicion ${Math.round(score * 100)} / 100`, 'neutral'));
+  if (trustScore > 0) head.appendChild(badge(`confiance ${Math.round(trustScore * 100)} / 100`, 'ok'));
   if (d.forced) head.appendChild(badge('aveu direct (immunisé au crédit)', 'danger'));
   wrap.appendChild(head);
 
   // Positive human-trust credit: what corroborates a real person.
-  if (d.trustSignals && d.trustSignals.length > 0) {
+  if (trustSignals.length > 0) {
     const tg = el('div', { class: 'level-group' });
-    tg.appendChild(el('div', { class: 'level-head' }, ['Crédit de confiance (pro-humain)', badge(`+${d.trustScore.toFixed(2)}`, 'ok')]));
+    tg.appendChild(el('div', { class: 'level-head' }, ['Crédit de confiance (pro-humain)', badge(`+${trustScore.toFixed(2)}`, 'ok')]));
     const ul = el('ul', { class: 'verdict-signals' });
-    for (const t of d.trustSignals) {
-      const li = el('li', {}, [badge(`+${t.weight}`, 'ok'), ` ${t.label}`]);
-      if (t.evidence.length > 0) {
+    for (const t of trustSignals) {
+      const li = el('li', {}, [badge(`+${t.weight ?? 0}`, 'ok'), ` ${t.label ?? ''}`]);
+      if (t.evidence && t.evidence.length > 0) {
         const code = document.createElement('code');
         code.textContent = ' ' + t.evidence.join(', ');
         li.appendChild(code);
@@ -346,7 +357,7 @@ function verdictCard(full: FullFingerprint): HTMLElement | null {
     wrap.appendChild(tg);
   }
 
-  const totalHits = d.byLevel.reduce((n, l) => n + l.hits.length, 0);
+  const totalHits = byLevel.reduce((n, l) => n + (l.hits?.length ?? 0), 0);
   if (totalHits === 0) {
     wrap.appendChild(
       el('p', {}, [
@@ -357,24 +368,25 @@ function verdictCard(full: FullFingerprint): HTMLElement | null {
     // Group the fired signals by level so the « why » reads N1 (aveux) → N2
     // (réseau) → N3 (cohérence), each with its own sub-verdict and score.
     wrap.appendChild(el('p', {}, [`${totalHits} signal(aux) déclenché(s) :`]));
-    for (const l of [...d.byLevel].sort((a, b) => a.level - b.level)) {
-      if (l.hits.length === 0) continue;
+    for (const l of [...byLevel].sort((a, b) => (a.level ?? 0) - (b.level ?? 0))) {
+      const hits = l.hits ?? [];
+      if (hits.length === 0) continue;
       const meta = LEVEL_META[l.level] ?? { label: `Niveau ${l.level}` };
       const lv = VERDICT_BADGE[l.verdict] ?? VERDICT_BADGE.unknown!;
       const group = el('div', { class: 'level-group' });
       const headRow = el('div', { class: 'level-head' });
       headRow.appendChild(document.createTextNode(meta.label));
       headRow.appendChild(badge(lv.label, lv.kind));
-      if (!l.forced) headRow.appendChild(badge(`score ${Math.round(l.score * 100)} / 100`, 'neutral'));
+      if (!l.forced) headRow.appendChild(badge(`score ${Math.round((l.score ?? 0) * 100)} / 100`, 'neutral'));
       group.appendChild(headRow);
 
       const ul = el('ul', { class: 'verdict-signals' });
-      for (const h of l.hits) {
+      for (const h of hits) {
         const li = el('li', {}, [
-          badge(h.severity === 'hard' ? 'aveu' : `+${h.weight}`, h.severity === 'hard' ? 'danger' : 'warn'),
-          ` ${h.label}`,
+          badge(h.severity === 'hard' ? 'aveu' : `+${h.weight ?? 0}`, h.severity === 'hard' ? 'danger' : 'warn'),
+          ` ${h.label ?? ''}`,
         ]);
-        if (h.evidence.length > 0) {
+        if (h.evidence && h.evidence.length > 0) {
           const code = document.createElement('code');
           code.textContent = ' ' + h.evidence.join(', ');
           li.appendChild(code);
@@ -386,7 +398,7 @@ function verdictCard(full: FullFingerprint): HTMLElement | null {
     }
   }
 
-  wrap.appendChild(el('p', { class: 'section-note' }, [`Règles : ${d.configVersion}.`]));
+  wrap.appendChild(el('p', { class: 'section-note' }, [`Règles : ${d.configVersion ?? 'inconnu'}.`]));
   return wrap;
 }
 

@@ -665,6 +665,93 @@ describe('trust credit & human verdict', () => {
   });
 });
 
+// ─── Trust forgery resistance — a forged client payload can't mint 'human' ────
+// Every trust signal except residential-IP is client-forgeable: a bot can post
+// organic-looking behaviour, a real-GPU string and a coherent navigator. The
+// forgeable-offset cap (config.trust.maxForgeableOffset) lets that credit shed a
+// moderate presumption but never whitewash a strong/stacked SERVER signal.
+describe('trust credit — forgery resistance', () => {
+  it('forged client trust + TLS↔UA lie + datacenter IP → bot (not human)', () => {
+    const r = runDecision(
+      fullInput({ tls: browserTls({ alpn: [] }), ip: ipFp({ isDatacenter: true }) }),
+      defaultConfig,
+      '2026-06-01T00:00:00.000Z',
+    );
+    // N2 = tls_ua_mismatch 0.7 + ip_datacenter 0.4 = 1.0 (capped). Forgeable
+    // credit offsets at most 0.15 → net 0.85 → stays bot, despite full trust.
+    expect(r.verdict).toBe('bot');
+    expect(r.trustScore).toBeGreaterThanOrEqual(0.5); // full credit is still high…
+  });
+
+  it('forged client trust + TLS↔UA lie alone → suspect (not human)', () => {
+    // No IP signals (ip: null) so only the 0.7 TLS lie remains; capped offset
+    // 0.15 → net 0.55 → suspect. Pre-fix (offset = full ~0.85) this was 'human'.
+    const r = runDecision(
+      fullInput({ tls: browserTls({ alpn: [] }), ip: null }),
+      defaultConfig,
+      '2026-06-01T00:00:00.000Z',
+    );
+    expect(r.verdict).toBe('suspect');
+  });
+
+  it('forged client trust on a Tor exit → suspect (not human)', () => {
+    // ip_tor 0.6 − capped offset 0.15 = 0.45 ≥ review → suspect.
+    const r = runDecision(fullInput({ ip: ipFp({ isTorExit: true }) }), defaultConfig, '2026-06-01T00:00:00.000Z');
+    expect(r.verdict).toBe('suspect');
+  });
+
+  it('a lone forged behavioural blob (no other tell) cannot reach human → clean', () => {
+    // Only the liveness anchor fires (forgeable + uncorroborated) → the
+    // corroboration gate denies the positive label.
+    const client = { behavioral: behavioral() } as unknown as DecisionInput['client'];
+    const r = runDecision(
+      { automation: cleanAutomation(), userAgent: CHROME_UA, client },
+      defaultConfig,
+      '2026-06-01T00:00:00.000Z',
+    );
+    expect(r.trustSignals.find((t) => t.id === 'trust_behavior_human')).toBeDefined();
+    expect(r.verdict).toBe('clean');
+  });
+
+  it('the cap does NOT block a real human escaping one VPN presumption', () => {
+    // Regression guard for the legitimate case: proxy 0.4 − 0.15 = 0.25 < review.
+    const r = runDecision(fullInput({ ip: ipFp({ isProxyHint: true }) }), defaultConfig, '2026-06-01T00:00:00.000Z');
+    expect(r.verdict).toBe('human');
+  });
+});
+
+// ─── TLS profiling — rich-field structural detection (beyond h2 + 5 ciphers) ──
+describe('level 2 — TLS rich-field profiling', () => {
+  it('h2 + full cipher list but no TLS 1.3 advertised → mismatch', () => {
+    const r = evaluateLevel(2, l2Input({ tls: browserTls({ supportedVersions: [0x0303], version: 0x0303 }) }), L2);
+    const hit = r.hits.find((h) => h.id === 'tls_ua_mismatch');
+    expect(hit).toBeDefined();
+    expect(hit?.evidence.join(' ')).toMatch(/TLS 1\.3/);
+  });
+
+  it('TLS 1.3 advertised but no key_share extension → mismatch (incomplete handshake)', () => {
+    // Drop key_share (51) from the extension list.
+    const r = evaluateLevel(2, l2Input({ tls: browserTls({ extensions: [0, 23, 65281, 10, 11, 13, 43] }) }), L2);
+    expect(r.hits.find((h) => h.id === 'tls_ua_mismatch')).toBeDefined();
+  });
+
+  it('no X25519 among the offered curves → mismatch', () => {
+    const r = evaluateLevel(2, l2Input({ tls: browserTls({ ellipticCurves: [23, 24] }) }), L2);
+    expect(r.hits.find((h) => h.id === 'tls_ua_mismatch')).toBeDefined();
+  });
+
+  it('a genuine modern-browser hello (h2, TLS1.3, key_share, X25519) → no mismatch', () => {
+    const r = evaluateLevel(2, l2Input({ tls: browserTls() }), L2);
+    expect(r.hits.find((h) => h.id === 'tls_ua_mismatch')).toBeUndefined();
+  });
+
+  it('matchToolSignature names a TLS-1.2-only tool wearing a browser UA', () => {
+    const r = evaluateLevel(2, l2Input({ tls: browserTls({ supportedVersions: [0x0303], version: 0x0303 }) }), L2);
+    const hit = r.hits.find((h) => h.id === 'tls_ua_mismatch');
+    expect(hit?.evidence.join(' ')).toMatch(/profil reconnu/);
+  });
+});
+
 // ─── Level 5 — réputation (agrégat cross-session) ────────────────────────────
 const L5 = defaultConfig.levels.find((l) => l.level === 5)!;
 

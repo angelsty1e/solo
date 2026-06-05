@@ -10,7 +10,7 @@ import { geoIpStatus } from './enrich/geoip.js';
 import { countryDbStatus } from './enrich/country.js';
 import { torListStatus } from './enrich/tor.js';
 import { enrichIpSync, enrichIpAwaited } from './enrich/pipeline.js';
-import { getFingerprintForSocket, getRealRemoteForSocket, getRttForSocket } from './tls/interceptor.js';
+import { getFingerprintForSocket, getRealRemoteForSocket, getRttForSocket, rateLimitKeyForSocket } from './tls/interceptor.js';
 import { getDb } from './db.js';
 import * as store from './store.js';
 import { analyze } from '../shared/decision/engine.js';
@@ -173,8 +173,7 @@ export async function registerRoutes(app: FastifyInstance, opts: RouteOptions): 
         rateLimit: {
           max: 15,
           timeWindow: '1 minute',
-          keyGenerator: (req) =>
-            getRealRemoteForSocket(req.raw.socket as never)?.addr ?? req.ip,
+          keyGenerator: (req) => rateLimitKeyForSocket(req.raw.socket as never),
         },
       },
     },
