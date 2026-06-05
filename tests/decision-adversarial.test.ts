@@ -223,12 +223,12 @@ describe('évasion — un bot ne doit jamais décrocher human/clean', () => {
     expect(['bot', 'suspect']).toContain(r.verdict);
   });
 
-  it("A4b — un essaim sur IP résidentielle reste bot (plancher au block, rem. d)", () => {
+  it("A4b — un essaim sur IP résidentielle reste bot (offset total plafonné, rem. d)", () => {
     // Le crédit résidentiel (0.1, non-forgeable, exempté du cap) s'ADDITIONNE au
-    // cap forgeable → offsetScore 0.3, ce qui SANS plancher rabaisserait la
-    // réputation maxée (1.0) à 0.7 = 'suspect'. Le plancher chirurgical plafonne
-    // l'offset total à maxForgeableOffset (0.15) pour un signal serveur ayant
-    // atteint le block → 1.0 − 0.15 = 0.85 → reste 'bot'.
+    // cap forgeable → offsetScore 0.3, ce qui SANS garde rabaisserait la
+    // réputation maxée (1.0) à 0.7 = 'suspect'. La rem. (d) plafonne l'offset
+    // TOTAL à maxForgeableOffset (0.15) dès que botScore ≥ block : la part
+    // résidentielle ne s'empile plus par-dessus le cap → 1.0 − 0.15 = 0.85 → 'bot'.
     const r = runDecision(
       {
         automation: cleanAutomation(),
