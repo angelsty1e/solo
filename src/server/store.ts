@@ -116,7 +116,7 @@ export function upsertServer(sessionId: string, server: ServerFingerprint): void
       asnOrg: server.ip?.asnOrganization ?? null,
       country: server.ip?.country ?? null,
       isDatacenter: server.ip?.isDatacenter == null ? null : server.ip.isDatacenter ? 1 : 0,
-      isProxyHint: server.ip?.isProxyHint ? 1 : 0,
+      isProxyHint: server.ip?.isProxyHint == null ? null : server.ip.isProxyHint ? 1 : 0,
       reverseDns: server.ip?.reverseDns ?? null,
       isTorExit: server.ip?.isTorExit == null ? null : server.ip.isTorExit ? 1 : 0,
       tcpRttMs: server.ip?.tcpRttMs ?? null,

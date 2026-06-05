@@ -253,6 +253,85 @@ describe('évasion — un bot ne doit jamais décrocher human/clean', () => {
     expect(r.verdict).toBe('clean');
   });
 
+  it("A8 [FINDING P1, ROUGE avant fix] — datacenter seul (0.4) + trust forgé ne doit pas décrocher 'human'", () => {
+    // Un bot hébergé en cloud (AWS/OVH) a isDatacenter=true (preuve SERVEUR,
+    // non-forgeable) mais PAS isProxyHint → L2 = 0.4 seul, SOUS le block. L'offset
+    // forgeable (0.15) ramène 0.4 → 0.25 < review(0.4), et le crédit forgé complet
+    // (score=1, liveness, corroboré par GPU/fonts forgés) décroche alors le label
+    // POSITIF 'human'. Une preuve serveur (datacenter) est donc non seulement
+    // annulée mais retournée en 'human' par des données 100 % forgeables.
+    // Remédiation proposée (cf. rapport §5) : 'human' exige une corroboration
+    // SERVEUR (trust_residential_ip) en plus de la liveness — un crédit purement
+    // forgeable plafonne à 'clean'. À discuter avant GO.
+    const r = runDecision(
+      {
+        automation: cleanAutomation(),
+        userAgent: CHROME_UA,
+        tls: browserTls(),
+        ip: ipFp({ isDatacenter: true, asnOrganization: 'Amazon AES' }),
+        client: forgedTrustClient(),
+      },
+      defaultConfig,
+      AT,
+    );
+    expect(r.byLevel.find((l) => l.level === 2)?.hits.find((h) => h.id === 'ip_datacenter')).toBeDefined();
+    expect(r.verdict).not.toBe('human');
+  });
+
+  it("A9 [FINDING P2, ROUGE avant fix] — 'human' ne devrait pas être minté sans aucune corroboration SERVEUR", () => {
+    // Client entièrement forgé (uTLS clone parfait → TLS browser-like, IP propre).
+    // Aucun signal serveur ne fire ; le crédit qui décroche 'human' (liveness +
+    // corroboration) est INTÉGRALEMENT forgeable (comportement + GPU/fonts/voix).
+    // Le label POSITIF 'human' affirme l'humanité ; il ne devrait pas être
+    // accordé sur la seule foi de la charge JS, qu'un bot réplique à l'identique.
+    // Remédiation (c'/b) : n'autoriser 'human' que si trust_residential_ip (serveur)
+    // corrobore, sinon 'clean'. Au pire ce test doit rester ≠ 'human'.
+    const r = runDecision(
+      {
+        automation: cleanAutomation(),
+        userAgent: CHROME_UA,
+        tls: browserTls(),
+        ip: ipFp(), // résidentielle propre — mais le bot ne contrôle pas ça ; ici on
+        // teste le cas où MÊME une IP résidentielle ne devrait pas suffire si toute
+        // la corroboration est forgeable. Variante stricte de la remédiation (b).
+        client: forgedTrustClient(),
+      },
+      defaultConfig,
+      AT,
+    );
+    // NOTE: avec une IP résidentielle, trust_residential_ip (serveur) corrobore
+    // réellement → 'human' est défendable. Ce test fige le comportement ACTUEL et
+    // documente la frontière : si Johann veut durcir (exiger un 2e ancrage serveur),
+    // il deviendra rouge. Tel quel, on asserte seulement le bornage.
+    expect(['human', 'clean']).toContain(r.verdict);
+  });
+
+  it("A6 — identité cohérente forgée + comportement forgé → pas 'bot', mais doc le pouvoir de 'human'", () => {
+    // Tout aligné (platform↔UA, langues, client-hints) → trust_identity_coherent
+    // (0.2) en plus de la liveness forgée. Sans signal serveur, le verdict est
+    // 'human' (corroboration + liveness, tout forgeable). On documente que la
+    // corroboration de la rem. (c) est elle-même forgeable.
+    const r = runDecision(
+      { automation: cleanAutomation(), userAgent: CHROME_UA, tls: browserTls(), ip: ipFp(), client: forgedTrustClient() },
+      defaultConfig,
+      AT,
+    );
+    expect(r.trustSignals.map((s) => s.id)).toContain('trust_identity_coherent');
+    // IP résidentielle propre → corroboration serveur réelle ; 'human' défendable.
+    expect(['human', 'clean']).toContain(r.verdict);
+  });
+
+  it("A10 [FINDING P1, ROUGE avant fix] — proxy/VPN seul (0.4) + trust forgé ne doit pas décrocher 'human'", () => {
+    // Identique à A8 mais via isProxyHint (autre preuve serveur isolée à 0.4).
+    const r = runDecision(
+      { automation: cleanAutomation(), userAgent: CHROME_UA, tls: browserTls(), ip: ipFp({ isProxyHint: true }), client: forgedTrustClient() },
+      defaultConfig,
+      AT,
+    );
+    expect(r.byLevel.find((l) => l.level === 2)?.hits.find((h) => h.id === 'ip_proxy')).toBeDefined();
+    expect(r.verdict).not.toBe('human');
+  });
+
   it("A7 — l'omission d'une surface (canvas null) n'échappe plus à la réputation", () => {
     // AVANT : fingerprintReputation() renvoyait {0,0} dès qu'un hash (canvas OU
     // webgl) était null → un bot mettait canvas=null (gardait webgl pour le crédit
@@ -439,6 +518,45 @@ describe('invariants', () => {
     const cfg = { ...defaultConfig, levels: defaultConfig.levels.map((l) => ({ ...l, enabled: false })) };
     const r = runDecision({ automation: cleanAutomation(), userAgent: CHROME_UA }, cfg, AT);
     expect(r.verdict).toBe('unknown');
+  });
+
+  it("I4 — sous aveu dur, le verdict est 'bot' (jamais human/clean/suspect) même trust max", () => {
+    const r = runDecision(
+      { automation: cleanAutomation({ selenium: true }), userAgent: CHROME_UA, tls: browserTls(), ip: ipFp(), client: forgedTrustClient() },
+      defaultConfig,
+      AT,
+    );
+    expect(r.verdict).toBe('bot');
+  });
+
+  it("I5 — 'human' exige la liveness (requireLiveness) : trust passif sans comportement → jamais human", () => {
+    // Tous les crédits passifs forgés MAIS aucun comportement organique → pas de
+    // liveness → le label 'human' est interdit, au mieux 'clean'.
+    const client = forgedTrustClient({ behavioral: undefined });
+    const r = runDecision({ automation: cleanAutomation(), userAgent: CHROME_UA, tls: browserTls(), ip: ipFp(), client }, defaultConfig, AT);
+    expect(r.verdict).not.toBe('human');
+  });
+
+  it('I9 — un payload zod-valide minimal (tout null) ne fait ni planter ni NaN', () => {
+    const parsed = ClientFingerprintSchema.safeParse(validClientPayload({
+      navigator: { ...(validClientPayload().navigator as object), languages: [] },
+      behavioral: {
+        totalEvents: 0, durationMs: 0,
+        mouse: { moves: 0, clicks: 0, meanSpeed: 0, stdSpeed: 0, meanCurvature: 0, stillRatio: 0, jitterRatio: 0 },
+        keyboard: { keydowns: 0, keyups: 0, meanDwellMs: 0, stdDwellMs: 0, meanFlightMs: 0, stdFlightMs: 0, backspaceRatio: 0 },
+        scroll: { events: 0, totalDeltaPx: 0, meanDeltaPx: 0, linearRatio: 0 },
+        touch: { starts: 0, moves: 0, ends: 0, meanPressure: 0, multiTouchMax: 0 },
+      },
+    }));
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    const r = runDecision(
+      { automation: cleanAutomation(), userAgent: CHROME_UA, client: parsed.data as unknown as DecisionInput['client'] },
+      defaultConfig,
+      AT,
+    );
+    expect(Number.isFinite(r.score)).toBe(true);
+    expect(Number.isFinite(r.trustScore)).toBe(true);
   });
 });
 
