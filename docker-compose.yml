@@ -1,0 +1,65 @@
+services:
+  solo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: solo:latest
+    container_name: solo
+    restart: unless-stopped
+    init: true
+
+    # Expose le port HTTPS directement sur l'hôte.
+    # ClientHello brut conservé → JA3/JA4 fonctionnent.
+    ports:
+      - "8443:8443"
+
+    # Charge ./.env s'il existe (toutes les valeurs ont un défaut, fichier optionnel).
+    env_file:
+      - path: .env
+        required: false
+
+    environment:
+      PORT: "8443"
+      HOST: "0.0.0.0"
+      LOG_LEVEL: "info"
+      NODE_ENV: "production"
+      # CN du certificat self-signed auto-généré au 1er boot (mets ton hostname).
+      TLS_CN: "${TLS_CN:-localhost}"
+      # Chemins absolus dans le container (montés via volumes ci-dessous).
+      CERT_PATH: "/certs/cert.pem"
+      KEY_PATH: "/certs/key.pem"
+      GEOIP_DB: "/data/GeoLite2-ASN.mmdb"
+      GEOIP_COUNTRY_DB: "/data/GeoLite2-Country.mmdb"
+      TOR_EXIT_LIST: "/data/tor-exit-nodes.txt"
+      DB_PATH: "/data/solo.db"
+
+    volumes:
+      # Certificats TLS : l'entrypoint en génère un self-signed ici au 1er boot
+      # si le dossier est vide. Dépose ton propre cert.pem/key.pem pour l'écraser.
+      - ./certs:/certs
+      # Données persistantes : SQLite + bases MaxMind + liste Tor.
+      # L'entrypoint (root) corrige les permissions puis lâche les privilèges
+      # vers l'uid 10001 — aucun `chown` manuel n'est nécessaire.
+      - ./data:/data
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      # Vrai check applicatif : handshake TLS *vérifié* + requête HTTPS sur /healthz.
+      # On ne désactive plus la validation TLS : on fournit le cert généré comme
+      # CA de confiance (option `ca`) et on force `servername:'localhost'` (présent
+      # dans les SAN du cert). Un MITM local sans la clé privée fait donc échouer
+      # le handshake. node fait l'appel : pas de curl à installer dans l'image.
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "const fs=require('fs');require('https').get({host:'127.0.0.1',port:8443,path:'/healthz',servername:process.env.TLS_CN||'localhost',ca:fs.readFileSync(process.env.CERT_PATH||'/certs/cert.pem')},r=>process.exit(r.statusCode<500?0:1)).on('error',e=>{console.error(e.message);process.exit(1)})"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

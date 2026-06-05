@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Solo — laboratoire pédagogique de fingerprinting : TLS (JA3/JA4), HTTP, navigateur et comportement." />
+  <meta name="theme-color" content="#0c0e13" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%237ad7ff' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23b07dff'/%3E%3C/svg%3E" />
+  <title>Solo — Fingerprint Lab</title>
+  <link rel="stylesheet" href="./tokens.css" />
+  <style>
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(1200px 800px at 50% 40%, #141826 0%, var(--bg) 60%, #07080c 100%);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+
+    /* Landing layout: button centered in viewport */
+    #landing {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      position: relative;
+    }
+    #landing h1 {
+      font-size: clamp(24px, 4vw, 36px);
+      margin: 0 0 8px;
+      text-align: center;
+      letter-spacing: -0.02em;
+    }
+    #landing .lede {
+      color: var(--muted);
+      margin: 0 0 56px;
+      text-align: center;
+      max-width: 560px;
+    }
+
+    /* Centerpiece: round button + aura layers */
+    .stage {
+      position: relative;
+      width: min(80vmin, 460px);
+      height: min(80vmin, 460px);
+      display: grid;
+      place-items: center;
+    }
+    .aura {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      pointer-events: none;
+      will-change: transform, opacity;
+    }
+    .aura-1 {
+      background: radial-gradient(circle at 50% 50%,
+        rgba(122, 215, 255, 0.35) 0%,
+        rgba(122, 215, 255, 0.10) 35%,
+        rgba(122, 215, 255, 0) 65%);
+      filter: blur(8px);
+    }
+    .aura-2 {
+      background: radial-gradient(circle at 50% 50%,
+        rgba(176, 125, 255, 0.30) 0%,
+        rgba(176, 125, 255, 0.08) 40%,
+        rgba(176, 125, 255, 0) 70%);
+      filter: blur(14px);
+    }
+    .ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 1px solid rgba(122, 215, 255, 0.25);
+      pointer-events: none;
+      will-change: transform, opacity;
+    }
+    .ring-2 { border-color: rgba(176, 125, 255, 0.18); }
+    .ring-3 { border-color: rgba(255, 255, 255, 0.06); }
+
+    #scan-btn {
+      position: relative;
+      width: 42%;
+      aspect-ratio: 1 / 1;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      background:
+        radial-gradient(circle at 35% 30%, #2a3146 0%, #161a22 55%, #0e1118 100%);
+      color: var(--fg);
+      font: inherit;
+      font-size: clamp(14px, 1.4vw, 16px);
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      box-shadow:
+        0 0 0 1px rgba(122, 215, 255, 0.10) inset,
+        0 10px 40px rgba(0, 0, 0, 0.5),
+        0 0 60px rgba(122, 215, 255, 0.15);
+      transition: transform .15s ease, box-shadow .25s ease;
+    }
+    #scan-btn:hover {
+      box-shadow:
+        0 0 0 1px rgba(122, 215, 255, 0.25) inset,
+        0 12px 50px rgba(0, 0, 0, 0.55),
+        0 0 90px rgba(122, 215, 255, 0.28);
+    }
+    #scan-btn:active { transform: scale(0.98); }
+    #scan-btn[disabled] { cursor: progress; opacity: 0.85; }
+    #scan-btn .label {
+      display: block;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    #scan-btn .title {
+      display: block;
+      font-size: clamp(16px, 1.8vw, 20px);
+    }
+
+    /* Running view (revealed after click) */
+    #running {
+      display: none;
+      max-width: 880px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+    #running.visible { display: block; }
+    #running h1 { font-size: 28px; margin: 0 0 4px; }
+    #running .lede { color: var(--muted); margin: 0 0 32px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+    }
+    .progress {
+      height: 8px;
+      background: #20242f;
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 8px 0 16px;
+    }
+    #progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #4cc3ff, #b07dff);
+      transition: width .3s ease;
+    }
+    #status { font-size: 14px; color: var(--muted); }
+    pre {
+      background: #0a0c11;
+      border: 1px solid var(--border);
+      padding: 12px;
+      border-radius: 8px;
+      overflow: auto;
+      font-size: 12px;
+      max-height: 360px;
+    }
+    .actions { margin-top: 12px; }
+    a#recap-link {
+      visibility: hidden;
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    input.demo {
+      width: 100%;
+      padding: 8px 12px;
+      background: #0a0c11;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--fg);
+      font: inherit;
+    }
+    label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .aura, .ring { animation: none !important; }
+    }
+
+    /* Consent overlay (shown before any collection starts) */
+    #consent {
+      position: fixed;
+      inset: 0;
+      background: rgba(6, 8, 12, 0.78);
+      backdrop-filter: blur(3px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 50;
+    }
+    #consent.visible { display: flex; }
+    #consent .box {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      max-width: 560px;
+      padding: 28px;
+    }
+    #consent h2 { margin: 0 0 12px; font-size: 20px; }
+    #consent p { margin: 0 0 12px; }
+    #consent ul { margin: 12px 0 16px; padding-left: 20px; color: var(--muted); font-size: 14px; }
+    #consent li { margin: 4px 0; }
+    #consent .fine { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+    #consent .row { display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap; }
+    #consent button {
+      font: inherit;
+      padding: 10px 18px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+    }
+    #consent .accept { background: var(--accent); color: #06222b; border-color: var(--accent); font-weight: 600; }
+    #consent .decline { background: transparent; color: var(--fg); }
+
+    /* Inline retry action shown when /collect fails */
+    #retry-btn {
+      display: none;
+      margin-top: 12px;
+      font: inherit;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--fg);
+      cursor: pointer;
+    }
+    #retry-btn.visible { display: inline-block; }
+  </style>
+</head>
+<body>
+  <div id="consent" role="dialog" aria-modal="true" aria-labelledby="consent-title">
+    <div class="box">
+      <h2 id="consent-title">Avant de lancer la collecte</h2>
+      <p>Cette démonstration mesure et enregistre temporairement (1&nbsp;heure) les données ci-dessous, pour te montrer ce qu'un site peut déduire de toi&nbsp;:</p>
+      <ul>
+        <li><strong>Réseau</strong> : adresse IP, géolocalisation/ASN, signatures TLS (JA3/JA4) et HTTP&nbsp;;</li>
+        <li><strong>Navigateur</strong> : canvas, WebGL, audio, polices, codecs, permissions…&nbsp;;</li>
+        <li><strong>Comportement</strong> : <em>rythme</em> de frappe, de souris et de scroll — jamais le texte tapé.</li>
+      </ul>
+      <p class="fine">Données conservées localement sur ce serveur et supprimées automatiquement après 1&nbsp;heure. Aucun traceur tiers, aucune ressource externe.</p>
+      <div class="row">
+        <button type="button" class="decline" id="consent-decline">Refuser</button>
+        <button type="button" class="accept" id="consent-accept">J'accepte, lancer le test</button>
+      </div>
+    </div>
+  </div>
+
+  <section id="landing">
+    <h1>Solo — Fingerprint Lab</h1>
+    <p class="lede">Collecte d'un fingerprint complet : TLS (JA3/JA4), HTTP, navigateur, comportement.</p>
+
+    <div class="stage" id="stage">
+      <div class="aura aura-2"></div>
+      <div class="aura aura-1"></div>
+      <div class="ring ring-3"></div>
+      <div class="ring ring-2"></div>
+      <div class="ring ring-1"></div>
+      <button id="scan-btn" type="button" aria-label="Lancer le test de fingerprinting">
+        <span class="label">Solo</span>
+        <span class="title">Lancer le test</span>
+      </button>
+    </div>
+  </section>
+
+  <main id="running">
+    <h1>Solo — Fingerprint Lab</h1>
+    <p class="lede">Collecte en cours…</p>
+
+    <section class="card">
+      <div class="progress">
+        <div id="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Progression de la collecte"></div>
+      </div>
+      <div id="status" role="status" aria-live="polite">Initialisation…</div>
+      <div class="actions">
+        <a id="recap-link" href="#">Voir le recap</a>
+        <button type="button" id="retry-btn">Réessayer l'envoi</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <label for="demo-input">Tape quelque chose ici pendant la fenêtre de collecte :</label>
+      <input id="demo-input" class="demo" type="text" autocomplete="off" placeholder="The quick brown fox…" />
+    </section>
+
+    <section class="card">
+      <h3 style="margin-top:0;font-size:14px;color:var(--muted)">Aperçu serveur (TLS + HTTP + IP)</h3>
+      <pre id="server-preview">…</pre>
+    </section>
+  </main>
+
+  <script type="module" src="../client/index.ts"></script>
+</body>
+</html>

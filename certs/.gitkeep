@@ -1,0 +1,2 @@
+# Drop your own cert.pem / key.pem here to override the auto-generated self-signed cert.
+# The container generates one automatically at first boot if this directory is empty.
