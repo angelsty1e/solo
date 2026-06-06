@@ -8,6 +8,39 @@ services:
     restart: unless-stopped
     init: true
 
+    # ─── Durcissement runtime (audit-hardening, P1) ──────────────────────────
+    # Le process Node tourne non-root (uid 10001 via gosu) et n'a besoin d'AUCUNE
+    # capability. On retire tout (`cap_drop: ALL`) et on ne rend QUE les caps dont
+    # l'ENTRYPOINT root a besoin AVANT le drop : chown/chmod des bind-mounts +
+    # gosu. `no-new-privileges` empêche toute ré-escalade setuid après le drop —
+    # il n'empêche PAS le drop root→user (réalisé par PID1 root avant exec gosu).
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN          # chown /data /certs /cert.pem /key.pem
+      - DAC_OVERRIDE   # écrire/chmod dans des bind-mounts root:root
+      - FOWNER         # chmod 600 sur la clé privée
+      - SETUID         # gosu → uid 10001
+      - SETGID         # gosu → gid 10001
+    # Rootfs immuable : seules écritures réelles = /data (SQLite WAL) et /certs
+    # (cert), tous deux montés en volume ci-dessous, + /tmp en tmpfs. Un RCE ne
+    # peut plus déposer de binaire ni persister dans /app, /usr, etc.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    # Blast radius d'un DoS (OOM/fork-bomb/slowloris) borné au conteneur, pas à
+    # l'hôte LXC. Ajuster mem_limit selon la taille des bases MaxMind chargées.
+    mem_limit: 512m
+    memswap_limit: 512m      # pas de swap → OOM contenu, pas de thrash hôte
+    pids_limit: 256          # borne fork-bomb / threads
+    cpus: "1.5"
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192           # borne les FD/sockets (slowloris, cf. audit-parsers)
+
     # Expose le port HTTPS directement sur l'hôte.
     # ClientHello brut conservé → JA3/JA4 fonctionnent.
     ports:

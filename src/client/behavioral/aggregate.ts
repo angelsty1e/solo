@@ -10,14 +10,17 @@ import { getMouseSamples, type MouseSample } from './mouse.js';
 import { getScrollSamples, type ScrollSample } from './scroll.js';
 import { getTouchSamples, type TouchSample } from './touch.js';
 
-function meanStd(values: number[]): { mean: number; std: number } {
+// Exportés pour les tests unitaires de la math pure (courbure, std de rythme…).
+// Ce sont les fonctions qui PRODUISENT les agrégats que le niveau N4 consomme :
+// les tester verrouille la chaîne « échantillons bruts → signal comportemental ».
+export function meanStd(values: number[]): { mean: number; std: number } {
   if (values.length === 0) return { mean: 0, std: 0 };
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
   const variance = values.reduce((acc, v) => acc + (v - mean) ** 2, 0) / values.length;
   return { mean, std: Math.sqrt(variance) };
 }
 
-function mouseAggregate(samples: MouseSample[]): MouseAggregate {
+export function mouseAggregate(samples: MouseSample[]): MouseAggregate {
   const moves = samples.filter((s) => s.type === 'move');
   const clicks = samples.filter((s) => s.type === 'click').length;
   const speeds: number[] = [];
@@ -59,7 +62,7 @@ function mouseAggregate(samples: MouseSample[]): MouseAggregate {
   };
 }
 
-function keyboardAggregate(events: KeyEvent[]): KeyboardAggregate {
+export function keyboardAggregate(events: KeyEvent[]): KeyboardAggregate {
   let downs = 0;
   let ups = 0;
   let backspaces = 0;
@@ -96,7 +99,7 @@ function keyboardAggregate(events: KeyEvent[]): KeyboardAggregate {
   };
 }
 
-function scrollAggregate(samples: ScrollSample[]): ScrollAggregate {
+export function scrollAggregate(samples: ScrollSample[]): ScrollAggregate {
   const deltas = samples.filter((s) => s.deltaY !== 0).map((s) => Math.abs(s.deltaY));
   const total = deltas.reduce((a, b) => a + b, 0);
   let linear = 0;
@@ -117,7 +120,7 @@ function scrollAggregate(samples: ScrollSample[]): ScrollAggregate {
   };
 }
 
-function touchAggregate(samples: TouchSample[]): TouchAggregate {
+export function touchAggregate(samples: TouchSample[]): TouchAggregate {
   let starts = 0;
   let moves = 0;
   let ends = 0;

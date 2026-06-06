@@ -143,11 +143,19 @@ export interface TrustResult {
   // At least one trust signal OTHER than the liveness anchor fired. The liveness
   // anchor (organic behaviour) is itself client-forgeable — a bot can put any
   // numbers in the JSON payload — so on its own it must NOT mint the positive
-  // 'human' label. Requiring an independent corroborating signal closes that
-  // (a lone forged behavioural blob earns 'clean', not 'human') without punishing
-  // a real VPN human, who still corroborates via identity/GPU even when no
-  // server-side credit (residential IP) is available. See runDecision.
+  // 'human' label. Requiring an independent corroborating signal is a first
+  // floor, but every such signal except residential-IP is ALSO client-forgeable.
+  // See `serverCorroborated`.
   corroborated: boolean;
+  // At least one trust signal that the client CANNOT forge fired — concretely
+  // `trust_residential_ip`, derived server-side from the observed IP/GeoIP. This
+  // is the real anchor for the positive 'human' label: without it, every credit
+  // that earned the label (organic behaviour, real GPU, coherent identity…) is
+  // replicable byte-for-byte by a bot posting a scripted payload, so a lone
+  // datacenter/proxy/Tor origin could otherwise mint 'human' off pure forgery.
+  // 'human' requires this; an uncorroborated-by-the-server credit caps at 'clean'
+  // (NOT 'bot' — a VPN is not proof of *non*-humanity either). See runDecision.
+  serverCorroborated: boolean;
 }
 
 export function computeTrust(
@@ -158,6 +166,7 @@ export function computeTrust(
   const signals: TrustHit[] = [];
   let liveness = false;
   let corroborated = false;
+  let serverCorroborated = false;
   // Sum forgeable and non-forgeable credit separately: the full sum earns the
   // positive 'human' label, but only a capped slice of the *forgeable* part may
   // offset server-side suspicion (a bot can replicate the whole client payload).
@@ -171,9 +180,12 @@ export function computeTrust(
     if (def.liveness) liveness = true;
     else corroborated = true; // an independent (non-liveness) signal fired
     if (def.clientForgeable) forgeableSum += weight;
-    else trustedSum += weight;
+    else {
+      trustedSum += weight;
+      serverCorroborated = true; // a non-forgeable (server-derived) signal fired
+    }
   }
   const score = Math.min(1, forgeableSum + trustedSum);
   const offsetScore = Math.min(1, trustedSum + Math.min(forgeableSum, cfg.maxForgeableOffset));
-  return { score, offsetScore, signals, liveness, corroborated };
+  return { score, offsetScore, signals, liveness, corroborated, serverCorroborated };
 }

@@ -80,7 +80,16 @@ export function runDecision(
     // must not mint 'human' on its own: require at least one INDEPENDENT trust
     // signal (identity coherence, real GPU, residential IP…). A lone forged
     // behavioural blob earns 'clean', not 'human'.
-    trust.corroborated
+    trust.corroborated &&
+    // …but that independent signal is ALSO forgeable for everything except the
+    // residential-IP credit. The positive 'human' label affirms humanity, so it
+    // demands at least one SERVER-derived corroboration the client can't fabricate
+    // (trust_residential_ip). Without it — a datacenter/proxy/Tor origin, or GeoIP
+    // down — the whole credit is replayable by a scripted bot, so we cap at
+    // 'clean': "nothing against you", but not a positive vouch. A genuine VPN
+    // human lands here too (a VPN is not proof of humanity), and crucially still
+    // never 'bot'.
+    trust.serverCorroborated
   ) {
     verdict = 'human';
   } else {

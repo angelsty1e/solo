@@ -648,10 +648,14 @@ describe('trust credit & human verdict', () => {
     expect(r.verdict).toBe('clean');
   });
 
-  it('trust offsets a network presumption (VPN human) → human', () => {
-    // Proxy IP alone = 0.4 (suspect), but organic behaviour + coherence offsets it.
+  it('trust offsets a network presumption (VPN human) → clean, never bot', () => {
+    // Proxy IP alone = 0.4 (suspect); organic behaviour + coherence offsets it
+    // below review (0.25). But a proxy IP yields NO residential corroboration, so
+    // the positive 'human' label is gated off (trust.serverCorroborated false) —
+    // a VPN is not proof of humanity. Result: 'clean' (cleared, not vouched), and
+    // crucially never 'bot'. The residential case below keeps 'human'.
     const r = runDecision(fullInput({ ip: ipFp({ isProxyHint: true }) }), defaultConfig, '2026-06-01T00:00:00.000Z');
-    expect(r.verdict).toBe('human');
+    expect(r.verdict).toBe('clean');
   });
 
   it('a hard confession is immune to trust (stays bot despite organic behaviour)', () => {
@@ -713,9 +717,22 @@ describe('trust credit — forgery resistance', () => {
     expect(r.verdict).toBe('clean');
   });
 
-  it('the cap does NOT block a real human escaping one VPN presumption', () => {
-    // Regression guard for the legitimate case: proxy 0.4 − 0.15 = 0.25 < review.
+  it('the cap does NOT push a real human escaping one VPN presumption to bot/suspect', () => {
+    // Regression guard for the legitimate case: proxy 0.4 − 0.15 = 0.25 < review,
+    // so the VPN human is NOT inculpated (never bot, never suspect). The positive
+    // 'human' label is reserved for a residential anchor (serverCorroborated), so
+    // on a proxy IP the right landing is 'clean' — see the trust-credit suite.
     const r = runDecision(fullInput({ ip: ipFp({ isProxyHint: true }) }), defaultConfig, '2026-06-01T00:00:00.000Z');
+    expect(r.verdict).toBe('clean');
+    expect(r.verdict).not.toBe('bot');
+  });
+
+  it('a residential human with full forgeable credit still earns the positive human label', () => {
+    // The fix gates 'human' on a SERVER-corroborated credit; this is that anchor.
+    // A real residential IP (ipFp default: not datacenter/proxy/Tor) fires
+    // trust_residential_ip → serverCorroborated → the positive label is allowed.
+    const r = runDecision(fullInput(), defaultConfig, '2026-06-01T00:00:00.000Z');
+    expect(r.trustSignals.find((t) => t.id === 'trust_residential_ip')).toBeDefined();
     expect(r.verdict).toBe('human');
   });
 });

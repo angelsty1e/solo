@@ -6,7 +6,7 @@ import { signalsForLevel } from './registry.js';
 // override at runtime (see resolveConfig). The `version` is persisted with each
 // verdict so a decision can always be traced back to the rules that produced it.
 export const defaultConfig: DecisionConfig = {
-  version: 'n1n2n3n4n5-trust-2026.06.5',
+  version: 'n1n2n3n4n5-trust-2026.06.6',
   levels: [
     {
       level: 1,
@@ -121,14 +121,18 @@ export const defaultConfig: DecisionConfig = {
     humanThreshold: 0.5, // min credit for the positive 'human' verdict
     requireLiveness: true, // 'human' requires organic behaviour
     // Cap on the *forgeable* slice of credit allowed to offset suspicion. Sized
-    // so a real VPN human sheds one moderate presumption, yet a fully-forged
-    // client payload keeps every strong server signal at least 'suspect' — with
-    // a margin above the review threshold (0.4) so IEEE-754 rounding never tips a
-    // borderline case back to 'human':
-    //   ip_proxy / ip_datacenter 0.4 − 0.15 = 0.25 → < review → 'human' (real VPN human escapes)
+    // so a real VPN human sheds one moderate presumption (out of 'suspect'), yet
+    // a fully-forged client payload keeps every strong server signal at least
+    // 'suspect' — with a margin above the review threshold (0.4) so IEEE-754
+    // rounding never tips a borderline case back below review:
+    //   ip_proxy / ip_datacenter 0.4 − 0.15 = 0.25 → < review → not suspect (then
+    //                                                'clean': no residential anchor
+    //                                                → never the positive 'human')
     //   ip_tor                   0.6 − 0.15 = 0.45 → ≥ review → stays 'suspect'
     //   tls_ua_mismatch          0.7 − 0.15 = 0.55 → ≥ review → stays 'suspect'
     //   stacked ≥ 0.95 (e.g. TLS 0.7 + rtt 0.3, capped 1.0) − 0.15 = 0.85 → stays 'bot'
+    // The positive 'human' label needs a SERVER-corroborated credit (residential
+    // IP) on top of this — see runDecision / trust.serverCorroborated.
     // A larger cap (0.2 puts Tor on the 0.4 knife-edge — 0.6−0.2=0.3999… in IEEE-754
     // → 'human'; 0.4 pulls 0.7 down to 0.3) would re-open the very bypass this
     // exists to close. Non-forgeable credit (residential IP) is exempt — see trust.ts.

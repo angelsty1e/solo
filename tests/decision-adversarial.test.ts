@@ -25,6 +25,10 @@ import { ClientFingerprintSchema } from '../src/shared/validation.js';
 //   (c) le label POSITIF 'human' exige une corroboration au-delà de l'ancre de
 //       liveness forgeable (`trust.corroborated`) → ferme A5 : un blob
 //       comportemental forgé seul obtient 'clean', plus jamais 'human'.
+//   (e) le label POSITIF 'human' exige EN PLUS une corroboration SERVEUR non
+//       forgeable (`trust.serverCorroborated` = IP résidentielle) → ferme A8/A10 :
+//       une présomption serveur isolée (datacenter/proxy, 0.4) + crédit 100 %
+//       forgeable ne décroche plus 'human' mais plafonne à 'clean' (jamais 'bot').
 //   (d) plancher chirurgical au block : pour un signal serveur ayant atteint le
 //       block, l'offset TOTAL est plafonné à maxForgeableOffset → ferme A4b (un
 //       botnet résidentiel reste 'bot') SANS inculper un humain VPN double-flaggé
@@ -253,16 +257,16 @@ describe('évasion — un bot ne doit jamais décrocher human/clean', () => {
     expect(r.verdict).toBe('clean');
   });
 
-  it("A8 [FINDING P1, ROUGE avant fix] — datacenter seul (0.4) + trust forgé ne doit pas décrocher 'human'", () => {
+  it("A8 [FINDING P1, fermé par rem. (e)] — datacenter seul (0.4) + trust forgé ne doit pas décrocher 'human'", () => {
     // Un bot hébergé en cloud (AWS/OVH) a isDatacenter=true (preuve SERVEUR,
     // non-forgeable) mais PAS isProxyHint → L2 = 0.4 seul, SOUS le block. L'offset
     // forgeable (0.15) ramène 0.4 → 0.25 < review(0.4), et le crédit forgé complet
     // (score=1, liveness, corroboré par GPU/fonts forgés) décroche alors le label
     // POSITIF 'human'. Une preuve serveur (datacenter) est donc non seulement
     // annulée mais retournée en 'human' par des données 100 % forgeables.
-    // Remédiation proposée (cf. rapport §5) : 'human' exige une corroboration
+    // Remédiation (e) EN PLACE (cf. rapport §5) : 'human' exige une corroboration
     // SERVEUR (trust_residential_ip) en plus de la liveness — un crédit purement
-    // forgeable plafonne à 'clean'. À discuter avant GO.
+    // forgeable sur IP datacenter plafonne à 'clean' (jamais 'bot').
     const r = runDecision(
       {
         automation: cleanAutomation(),
@@ -276,6 +280,7 @@ describe('évasion — un bot ne doit jamais décrocher human/clean', () => {
     );
     expect(r.byLevel.find((l) => l.level === 2)?.hits.find((h) => h.id === 'ip_datacenter')).toBeDefined();
     expect(r.verdict).not.toBe('human');
+    expect(r.verdict).toBe('clean'); // annulé sous review, mais sans ancre serveur → pas 'human'
   });
 
   it("A9 [FINDING P2, ROUGE avant fix] — 'human' ne devrait pas être minté sans aucune corroboration SERVEUR", () => {
@@ -321,7 +326,7 @@ describe('évasion — un bot ne doit jamais décrocher human/clean', () => {
     expect(['human', 'clean']).toContain(r.verdict);
   });
 
-  it("A10 [FINDING P1, ROUGE avant fix] — proxy/VPN seul (0.4) + trust forgé ne doit pas décrocher 'human'", () => {
+  it("A10 [FINDING P1, fermé par rem. (e)] — proxy/VPN seul (0.4) + trust forgé ne doit pas décrocher 'human'", () => {
     // Identique à A8 mais via isProxyHint (autre preuve serveur isolée à 0.4).
     const r = runDecision(
       { automation: cleanAutomation(), userAgent: CHROME_UA, tls: browserTls(), ip: ipFp({ isProxyHint: true }), client: forgedTrustClient() },
@@ -330,6 +335,7 @@ describe('évasion — un bot ne doit jamais décrocher human/clean', () => {
     );
     expect(r.byLevel.find((l) => l.level === 2)?.hits.find((h) => h.id === 'ip_proxy')).toBeDefined();
     expect(r.verdict).not.toBe('human');
+    expect(r.verdict).toBe('clean');
   });
 
   it("A7 — l'omission d'une surface (canvas null) n'échappe plus à la réputation", () => {
@@ -578,6 +584,29 @@ describe('crédit de confiance — pouvoir d’annulation forgeable', () => {
     expect(t.score).toBeGreaterThanOrEqual(defaultConfig.trust.humanThreshold);
     expect(t.liveness).toBe(true);
     expect(t.corroborated).toBe(false);
+  });
+
+  it("rem. (e) : un crédit 100 % forgeable est corroboré mais PAS serverCorroborated", () => {
+    // forgedTrustClient allume tous les crédits forgeables (GPU/fonts/identité…)
+    // → corroborated=true, mais SANS IP résidentielle (ip absent) le seul signal
+    // non-forgeable (trust_residential_ip) ne fire pas → serverCorroborated=false.
+    const t = computeTrust(
+      { automation: cleanAutomation(), userAgent: CHROME_UA, client: forgedTrustClient() },
+      defaultConfig.trust,
+      new Set(),
+    );
+    expect(t.corroborated).toBe(true);
+    expect(t.serverCorroborated).toBe(false);
+  });
+
+  it("rem. (e) : une IP résidentielle (serveur) donne serverCorroborated", () => {
+    const t = computeTrust(
+      { automation: cleanAutomation(), userAgent: CHROME_UA, ip: ipFp(), client: forgedTrustClient() },
+      defaultConfig.trust,
+      new Set(),
+    );
+    expect(t.signals.map((s) => s.id)).toContain('trust_residential_ip');
+    expect(t.serverCorroborated).toBe(true);
   });
 });
 
