@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Les scripts shell et le Dockerfile DOIVENT garder des fins de ligne LF, même
+# checkout sur Windows (core.autocrlf=true). Un shebang en CRLF (#!/bin/sh\r)
+# casse `exec /entrypoint.sh` dans le conteneur Linux ("no such file or directory").
+*.sh           text eol=lf
+entrypoint.sh  text eol=lf
+Dockerfile     text eol=lf

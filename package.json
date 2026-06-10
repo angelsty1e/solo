@@ -1,6 +1,6 @@
 {
   "name": "solo",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "description": "Fingerprint Lab — TLS (JA3/JA4) + HTTP + browser + behavioral fingerprinting from scratch",
   "type": "module",

@@ -47,7 +47,11 @@ RUN apt-get update \
 COPY --from=builder --chown=solo:solo /app/node_modules ./node_modules
 COPY --from=builder --chown=solo:solo /app/dist ./dist
 COPY --from=builder --chown=solo:solo /app/package.json ./package.json
-COPY --chmod=0755 entrypoint.sh /entrypoint.sh
+COPY entrypoint.sh /entrypoint.sh
+# Strip any CRLF (repo checked out on Windows with autocrlf=true) so the shebang
+# resolves inside the Linux container, then make it executable. Sans ça :
+# `exec /entrypoint.sh: no such file or directory`.
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod 0755 /entrypoint.sh
 
 EXPOSE 8443
 
