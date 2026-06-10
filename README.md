@@ -1,6 +1,6 @@
 # solo — Fingerprint Lab
 
-Laboratoire pédagogique de **fingerprinting**, écrit à la main, sans librairie tierce et sans dépendance réseau au runtime. Il capture et explique tout ce qu'un serveur peut apprendre d'un navigateur :
+Laboratoire pédagogique de **fingerprinting**, sans librairie tierce et sans dépendance réseau au runtime. Il capture et explique tout ce qu'un serveur peut apprendre d'un navigateur :
 
 | Couche | Ce qui est mesuré |
 | --- | --- |
