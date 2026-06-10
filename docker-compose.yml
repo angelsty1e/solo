@@ -64,16 +64,23 @@ services:
       GEOIP_DB: "/data/GeoLite2-ASN.mmdb"
       GEOIP_COUNTRY_DB: "/data/GeoLite2-Country.mmdb"
       TOR_EXIT_LIST: "/data/tor-exit-nodes.txt"
-      DB_PATH: "/data/solo.db"
+      # La base SQLite vit sur un VOLUME NOMMÉ (ext4 dans la VM Docker), PAS sur
+      # un bind mount. SQLite est en mode WAL (-shm + mmap) : un bind mount sur
+      # un disque Windows (WSL/DrvFs) ne supporte pas le mmap → "disk I/O error".
+      # Le volume nommé règle ça sur macOS/Linux/Windows, quel que soit le dossier.
+      DB_PATH: "/db/solo.db"
 
     volumes:
-      # Certificats TLS : l'entrypoint en génère un self-signed ici au 1er boot
-      # si le dossier est vide. Dépose ton propre cert.pem/key.pem pour l'écraser.
+      # Certificats TLS (bind mount) : l'entrypoint en génère un self-signed ici
+      # au 1er boot si le dossier est vide. Dépose ton propre cert.pem/key.pem
+      # pour l'écraser (cf. README → « Démarrage rapide »).
       - ./certs:/certs
-      # Données persistantes : SQLite + bases MaxMind + liste Tor.
-      # L'entrypoint (root) corrige les permissions puis lâche les privilèges
-      # vers l'uid 10001 — aucun `chown` manuel n'est nécessaire.
-      - ./data:/data
+      # Bases MaxMind (GeoLite2-*.mmdb) + liste Tor : lues uniquement (readFileSync),
+      # donc montées en LECTURE SEULE. Aucune permission Unix requise → OK même sur
+      # un bind mount Windows. Dépose tes fichiers ici pour activer l'enrichissement.
+      - ./data:/data:ro
+      # Base SQLite persistante (WAL) sur volume nommé Linux — voir DB_PATH ci-dessus.
+      - solo-db:/db
 
     logging:
       driver: json-file
@@ -96,3 +103,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+# Volume nommé pour la base SQLite (WAL). Vit dans la VM Docker (ext4) et non sur
+# le disque hôte → fonctionne identiquement sur macOS, Linux et Windows.
+# Pour repartir d'une base vierge : `docker compose down -v`.
+volumes:
+  solo-db:

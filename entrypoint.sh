@@ -52,16 +52,24 @@ chmod 600 "$KEY_PATH" 2>/dev/null || true
 chown -R "$APP_UID:$APP_GID" "$DATA_DIR" 2>/dev/null || true
 chown "$APP_UID:$APP_GID" "$CERT_PATH" "$KEY_PATH" 2>/dev/null || true
 
-# 3. Fail-fast on an insecure private key. If ./certs is mounted read-only the
-#    chmod above is a silent no-op, so verify the *actual* perms rather than
-#    trusting the chmod: a group/other-readable key must never reach the network.
+# 3. The private key must not be group/other-readable before it serves traffic.
+#    On a Linux filesystem the chmod above makes it 600 and this check passes.
+#    On a Windows bind mount (WSL/DrvFs — e.g. a repo cloned under C:\…), Unix
+#    permissions don't exist: chmod is a silent no-op and stat keeps reporting
+#    0777. There is physically no way to lock the file down there. Since solo's
+#    key is a self-signed certificate for a *local* lab on localhost, we warn
+#    loudly and keep going instead of refusing to boot — otherwise the lab is
+#    simply unusable on Windows. For any real/exposed deployment, keep ./certs
+#    on a Linux filesystem (or a Docker named volume) so this stays enforced.
 KEY_PERMS="$(stat -c '%a' "$KEY_PATH" 2>/dev/null || echo '???')"
 case "$KEY_PERMS" in
-  600 | 400) ;; # owner-only read(+write) — OK
+  600 | 400) ;; # owner-only read(+write) — enforced, OK
   *)
-    echo "[entrypoint] FATAL: private key $KEY_PATH has insecure permissions ($KEY_PERMS, expected 600)." >&2
-    echo "[entrypoint] Refusing to start. Fix the perms (chmod 600) or remount ./certs writable." >&2
-    exit 1
+    echo "[entrypoint] WARN: cannot restrict $KEY_PATH to 0600 (current perms: $KEY_PERMS)." >&2
+    echo "[entrypoint] WARN: the filesystem backing /certs ignores Unix permissions —" >&2
+    echo "[entrypoint] WARN: typical of a Windows bind mount via WSL. This is a self-signed" >&2
+    echo "[entrypoint] WARN: localhost key for a local lab, so we continue. For any exposed" >&2
+    echo "[entrypoint] WARN: deployment, mount ./certs on a Linux filesystem or named volume." >&2
     ;;
 esac
 

@@ -41,8 +41,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends openssl gosu ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -r -u 10001 -m solo \
- && mkdir -p /data /certs \
- && chown -R solo:solo /app /data /certs
+ && mkdir -p /data /certs /db \
+ && chown -R solo:solo /app /data /certs /db
 
 COPY --from=builder --chown=solo:solo /app/node_modules ./node_modules
 COPY --from=builder --chown=solo:solo /app/dist ./dist
@@ -64,6 +64,6 @@ ENV PORT=8443 \
     GEOIP_DB=/data/GeoLite2-ASN.mmdb \
     GEOIP_COUNTRY_DB=/data/GeoLite2-Country.mmdb \
     TOR_EXIT_LIST=/data/tor-exit-nodes.txt \
-    DB_PATH=/data/solo.db
+    DB_PATH=/db/solo.db
 
 ENTRYPOINT ["/entrypoint.sh"]
