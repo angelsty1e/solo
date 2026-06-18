@@ -1,0 +1,31 @@
+solo — Fingerprint Lab
+Copyright 2026 angelsty1e
+
+This product includes software developed by angelsty1e.
+
+Licensed under the Apache License, Version 2.0 (the "License").
+You may obtain a copy of the License in the LICENSE file distributed
+with this work or at http://www.apache.org/licenses/LICENSE-2.0
+
+------------------------------------------------------------------------
+Third-party attributions
+------------------------------------------------------------------------
+
+This product is designed to consume GeoLite2 data created by MaxMind,
+available from https://www.maxmind.com (GeoLite2-ASN and
+GeoLite2-Country databases). The GeoLite2 databases are not distributed
+with this source and are subject to the MaxMind GeoLite2 End User
+License Agreement. If you redistribute these databases, you must comply
+with that agreement and retain MaxMind's attribution:
+
+    This product includes GeoLite2 data created by MaxMind, available
+    from https://www.maxmind.com
+
+Runtime dependencies (retrieved from npm, not redistributed in this
+source tree) are licensed by their respective authors; see each
+package's own license. Notable dependencies and their licenses:
+
+    fastify, @fastify/helmet, @fastify/rate-limit, @fastify/static  — MIT
+    zod                                                             — MIT
+    maxmind                                                         — MIT
+    better-sqlite3                                                  — MIT

@@ -285,3 +285,13 @@ La suite `npm test` couvre le parseur ClientHello, la dérivation JA3/JA4 (filtr
 - JA4 suit la spec FoxIO simplifiée (TCP/TLS) ; le tag QUIC n'est pas géré.
 - La détection de fonts par mesure est approximative ; `queryLocalFonts()` (si autorisé) donne la liste exacte.
 - Proxies résidentiels non détectés au niveau ASN (voir [Moteur de décision](#classification-réseau--asn-par-numéro)).
+
+---
+
+## 📜 Licence
+
+Distribué sous licence **Apache 2.0** — voir [`LICENSE`](LICENSE) et [`NOTICE`](NOTICE).
+
+Copyright 2026 angelsty1e.
+
+> Ce projet utilise les bases **GeoLite2** de MaxMind (non incluses dans ce dépôt). Toute redistribution de ces bases doit conserver l'attribution MaxMind (cf. `NOTICE`).

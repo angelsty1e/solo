@@ -3,6 +3,7 @@
   "version": "1.4.2",
   "private": true,
   "description": "Fingerprint Lab — TLS (JA3/JA4) + HTTP + browser + behavioral fingerprinting from scratch",
+  "license": "Apache-2.0",
   "type": "module",
   "engines": {
     "node": ">=20"
