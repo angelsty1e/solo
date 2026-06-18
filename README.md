@@ -292,6 +292,6 @@ La suite `npm test` couvre le parseur ClientHello, la dérivation JA3/JA4 (filtr
 
 Distribué sous licence **Apache 2.0** — voir [`LICENSE`](LICENSE) et [`NOTICE`](NOTICE).
 
-Copyright 2026 angelsty1e.
+Copyright 2026 Johann FOURNIER.
 
 > Ce projet utilise les bases **GeoLite2** de MaxMind (non incluses dans ce dépôt). Toute redistribution de ces bases doit conserver l'attribution MaxMind (cf. `NOTICE`).
