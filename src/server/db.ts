@@ -166,6 +166,11 @@ export function initDb(dbPath: string): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
+  // Overwrite freed pages on DELETE. The TTL sweeper purges sessions holding
+  // personal data (IPs, fingerprints); without secure_delete those bytes linger
+  // readable in free pages of the .db file until reused — defeating the point of
+  // the retention purge. Cheap here (small, write-light DB).
+  db.pragma('secure_delete = ON');
   // Wait (instead of throwing SQLITE_BUSY) if another writer holds the lock.
   db.pragma('busy_timeout = 5000');
   // Schema + migrations are fail-fast: a DB that can't be brought to the current

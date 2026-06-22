@@ -39,6 +39,16 @@ const ratio = z.number().min(0).max(1);
 const metric = z.number().finite().min(0);
 const signed = z.number().finite();
 
+// String / array bounds. The 512 KB bodyLimit caps the whole payload, but
+// without per-field caps a single hostile field (a megabyte-long userAgent, an
+// array of 100k fonts) can still bloat the DB row and any log line that echoes
+// it. Generous enough for any genuine browser value, tight enough to reject the
+// absurd. `arr` also bounds element COUNT — the real unbounded-memory vector.
+const text = z.string().max(4096); // free-form: UA, appVersion, GPU renderer…
+const label = z.string().max(256); // short identifiers: langs, names, formats…
+const hash = z.string().max(256); // collector digests
+const arr = <T extends z.ZodTypeAny>(el: T, max = 1024) => z.array(el).max(max);
+
 const uaDataSchema = z
   .object({
     brands: z.array(z.object({ brand: z.string(), version: z.string() })),
@@ -54,16 +64,16 @@ const uaDataSchema = z
   .nullable();
 
 const navigatorSchema = z.object({
-  userAgent: z.string(),
-  appVersion: z.string(),
-  platform: z.string(),
-  vendor: z.string(),
-  product: z.string(),
-  language: z.string(),
-  languages: z.array(z.string()),
+  userAgent: text,
+  appVersion: text,
+  platform: label,
+  vendor: label,
+  product: label,
+  language: label,
+  languages: arr(label, 64),
   hardwareConcurrency: count,
   deviceMemory: z.number().min(0).max(1_048_576).nullable(),
-  doNotTrack: z.string().nullable(),
+  doNotTrack: z.string().max(64).nullable(),
   maxTouchPoints: count,
   cookieEnabled: z.boolean(),
   pdfViewerEnabled: z.boolean().nullable(),
@@ -97,8 +107,8 @@ const localeSchema = z.object({
 
 const canvasSchema = z
   .object({
-    dataUrlHash: z.string(),
-    textMetricsHash: z.string(),
+    dataUrlHash: hash,
+    textMetricsHash: hash,
     winding: z.boolean(),
     fillTextSupported: z.boolean(),
     toDataURLLength: z.number(),
@@ -107,15 +117,15 @@ const canvasSchema = z
 
 const webglSchema = z
   .object({
-    vendor: z.string().nullable(),
-    renderer: z.string().nullable(),
-    unmaskedVendor: z.string().nullable(),
-    unmaskedRenderer: z.string().nullable(),
-    version: z.string().nullable(),
-    shadingLanguageVersion: z.string().nullable(),
-    extensions: z.array(z.string()),
+    vendor: text.nullable(),
+    renderer: text.nullable(),
+    unmaskedVendor: text.nullable(),
+    unmaskedRenderer: text.nullable(),
+    version: text.nullable(),
+    shadingLanguageVersion: text.nullable(),
+    extensions: arr(label, 512),
     maxTextureSize: z.number().nullable(),
-    parametersHash: z.string(),
+    parametersHash: hash,
   })
   .nullable();
 
@@ -131,17 +141,17 @@ const audioSchema = z
 
 const fontsSchema = z
   .object({
-    detectedFonts: z.array(z.string()),
+    detectedFonts: arr(label, 4096),
     detectionMethod: z.enum(['measurement', 'queryLocalFonts', 'unavailable']),
   })
   .nullable();
 
 const webrtcSchema = z
   .object({
-    localIps: z.array(z.string()),
-    publicIp: z.string().nullable(),
-    candidates: z.array(z.string()),
-    error: z.string().nullable(),
+    localIps: arr(label, 64),
+    publicIp: z.string().max(128).nullable(),
+    candidates: arr(z.string().max(512), 256),
+    error: z.string().max(512).nullable(),
   })
   .nullable();
 
@@ -157,31 +167,32 @@ const automationSchema = z.object({
   webdriver: z.boolean().nullable(),
   pluginsLength: count,
   mimeTypesLength: count,
-  pluginNames: z.array(z.string()),
-  mimeTypeNames: z.array(z.string()),
+  pluginNames: arr(label, 512),
+  mimeTypeNames: arr(label, 512),
   chromeRuntime: z.boolean(),
   hasNotificationPermission: z.boolean(),
-  inconsistencies: z.array(z.string()),
+  inconsistencies: arr(label, 256),
   callPhantom: z.boolean(),
   nightmare: z.boolean(),
   selenium: z.boolean(),
-  playwrightHints: z.array(z.string()),
-  cdpHints: z.array(z.string()),
+  playwrightHints: arr(label, 256),
+  cdpHints: arr(label, 256),
 });
 
 const speechSchema = z
   .object({
     available: z.boolean(),
     voiceCount: count,
-    voices: z.array(
+    voices: arr(
       z.object({
-        name: z.string(),
-        lang: z.string(),
+        name: label,
+        lang: label,
         localService: z.boolean(),
         default: z.boolean(),
       }),
+      512,
     ),
-    voicesHash: z.string(),
+    voicesHash: hash,
   })
   .nullable();
 

@@ -181,7 +181,12 @@ export function parseClientHello(raw: Buffer): ParsedClientHello {
             while (off < end) {
               const protoLen = data.readUInt8(off);
               off += 1;
+              // Zero-length entry is malformed/padding: skip rather than push ''
+              // (an empty string would pollute the JA4 ALPN component). `off`
+              // already advanced, so the loop still terminates.
+              if (protoLen === 0) continue;
               if (off + protoLen > end) break;
+              if (alpn.length >= 64) break; // bound the list a crafted hello can build
               alpn.push(data.subarray(off, off + protoLen).toString('utf8'));
               off += protoLen;
             }

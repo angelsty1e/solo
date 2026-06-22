@@ -20,6 +20,11 @@
   --bg: #0c0e13;
   --fg: #e7e9ee;
   --muted: #8b93a7;
+  /* Texte informatif courant (lede, notes, en-têtes de tableau, dt…) : --muted
+     (#8b93a7) tombe sous le ratio AA 4.5:1 sur le fond sombre. --muted-strong
+     (même teinte que .badge.neutral, déjà validée AA) sert au texte à lire ;
+     on garde --muted pour le purement décoratif. */
+  --muted-strong: #c7cdda;
   --accent: #7ad7ff;
   --accent-2: #b07dff;
   --panel: #161a22;

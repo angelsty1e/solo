@@ -44,7 +44,7 @@
       letter-spacing: -0.02em;
     }
     #landing .lede {
-      color: var(--muted);
+      color: var(--muted-strong);
       margin: 0 0 56px;
       text-align: center;
       max-width: 560px;
@@ -141,7 +141,7 @@
     }
     #running.visible { display: block; }
     #running h1 { font-size: 28px; margin: 0 0 4px; }
-    #running .lede { color: var(--muted); margin: 0 0 32px; }
+    #running .lede { color: var(--muted-strong); margin: 0 0 32px; }
     .card {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -162,7 +162,7 @@
       background: linear-gradient(90deg, #4cc3ff, #b07dff);
       transition: width .3s ease;
     }
-    #status { font-size: 14px; color: var(--muted); }
+    #status { font-size: 14px; color: var(--muted-strong); }
     pre {
       background: #0a0c11;
       border: 1px solid var(--border);
@@ -188,7 +188,9 @@
       color: var(--fg);
       font: inherit;
     }
-    label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
+    label { font-size: 13px; color: var(--muted-strong); display: block; margin-bottom: 6px; }
+    /* Micro-rappel sous le champ de saisie : informatif → contraste AA. */
+    .field-hint { font-size: 12.5px; color: var(--muted-strong); margin: 6px 0 0; }
 
     @media (prefers-reduced-motion: reduce) {
       .aura, .ring { animation: none !important; }
@@ -222,6 +224,11 @@
     #consent .row { display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap; }
     #consent button {
       font: inherit;
+      /* Cible tactile ≥ 44px (inline-flex pour centrer le label sur la hauteur). */
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       padding: 10px 18px;
       border-radius: 10px;
       border: 1px solid var(--border);
@@ -235,6 +242,10 @@
       display: none;
       margin-top: 12px;
       font: inherit;
+      /* Cible tactile ≥ 44px. */
+      min-height: 44px;
+      align-items: center;
+      justify-content: center;
       padding: 8px 14px;
       border-radius: 8px;
       border: 1px solid var(--border);
@@ -242,7 +253,39 @@
       color: var(--fg);
       cursor: pointer;
     }
-    #retry-btn.visible { display: inline-block; }
+    #retry-btn.visible { display: inline-flex; }
+    #retry-btn[disabled] { opacity: 0.6; cursor: progress; }
+
+    /* Boutons d'action injectés par le client (Terminer maintenant, Relancer,
+       Rester ici…). Cible tactile ≥ 44px et même langage visuel que #retry-btn. */
+    .inline-btn {
+      font: inherit;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--fg);
+      cursor: pointer;
+    }
+    .inline-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .inline-btn[disabled] { opacity: 0.6; cursor: progress; }
+
+    /* Garde-fou sans JS : message en clair si le bundle ne s'attache pas. */
+    .noscript-banner {
+      max-width: 560px;
+      margin: 0 0 24px;
+      padding: 14px 16px;
+      border: 1px solid var(--warn);
+      border-radius: 10px;
+      background: rgba(255, 184, 76, 0.12);
+      color: var(--fg);
+      text-align: center;
+      font-size: 14px;
+    }
   </style>
 </head>
 <body>
@@ -267,15 +310,25 @@
     <h1>Solo — Fingerprint Lab</h1>
     <p class="lede">Collecte d'un fingerprint complet : TLS (JA3/JA4), HTTP, navigateur, comportement.</p>
 
+    <noscript>
+      <p class="noscript-banner">
+        Ce laboratoire a besoin de JavaScript pour mesurer ton navigateur et ton
+        comportement. Active JavaScript puis recharge la page pour lancer le test.
+      </p>
+    </noscript>
+
     <div class="stage" id="stage">
       <div class="aura aura-2"></div>
       <div class="aura aura-1"></div>
       <div class="ring ring-3"></div>
       <div class="ring ring-2"></div>
       <div class="ring ring-1"></div>
-      <button id="scan-btn" type="button" aria-label="Lancer le test de fingerprinting">
+      <!-- Désactivé par défaut : tant que le bundle ne s'est pas attaché (init()),
+           le bouton ne fait rien — on le laisse donc inerte plutôt que de laisser
+           croire à un clic actif. init() le réactive une fois le handler posé. -->
+      <button id="scan-btn" type="button" disabled aria-busy="true" aria-label="Lancer le test de fingerprinting (chargement…)">
         <span class="label">Solo</span>
-        <span class="title">Lancer le test</span>
+        <span class="title">Chargement…</span>
       </button>
     </div>
   </section>
@@ -289,6 +342,9 @@
         <div id="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Progression de la collecte"></div>
       </div>
       <div id="status" role="status" aria-live="polite">Initialisation…</div>
+      <!-- Contrôles de la fenêtre comportementale : compte à rebours + bouton pour
+           conclure plus tôt. Peuplés/masqués par le client ; vides au repos. -->
+      <div id="wait-controls" class="actions" hidden></div>
       <div class="actions">
         <a id="recap-link" href="#">Voir le recap</a>
         <button type="button" id="retry-btn">Réessayer l'envoi</button>
@@ -297,11 +353,12 @@
 
     <section class="card">
       <label for="demo-input">Tape quelque chose ici pendant la fenêtre de collecte :</label>
-      <input id="demo-input" class="demo" type="text" autocomplete="off" placeholder="The quick brown fox…" />
+      <input id="demo-input" class="demo" type="text" autocomplete="off" placeholder="The quick brown fox…" aria-describedby="demo-hint" />
+      <p id="demo-hint" class="field-hint">Seul ton rythme de frappe est mesuré — jamais le texte.</p>
     </section>
 
     <section class="card">
-      <h3 style="margin-top:0;font-size:14px;color:var(--muted)">Aperçu serveur (TLS + HTTP + IP)</h3>
+      <h3 style="margin-top:0;font-size:14px;color:var(--muted-strong)">Aperçu serveur (TLS + HTTP + IP)</h3>
       <pre id="server-preview">…</pre>
     </section>
   </main>

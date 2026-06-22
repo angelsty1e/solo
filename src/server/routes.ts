@@ -209,21 +209,16 @@ export async function registerRoutes(app: FastifyInstance, opts: RouteOptions): 
       const sessionId = randomUUID();
       const client = { ...parsed.data, sessionId };
       const server = await buildServerFingerprintAwaited(req);
-      store.upsertServer(sessionId, server);
-      const full = store.upsertClient(sessionId, client);
 
-      // Cross-session reputation: how many distinct IPs share this exact
-      // canvas+WebGL fingerprint in the retention window. Queried AFTER the
-      // current session is stored, so it counts itself.
-      const reputation = store.fingerprintReputation(
-        full.client.canvas?.dataUrlHash ?? null,
-        full.client.webgl?.parametersHash ?? null,
+      // Persist the whole session atomically. persistSession reads the
+      // cross-session reputation BEFORE writing this row (so a replayed session
+      // can't inflate its own distinct-IP count), assembles the full fingerprint
+      // in memory, runs the decision engine on it, and commits server + client +
+      // decision in a single transaction — no orphan-decision window, no scoring
+      // on a partially-read row.
+      const { full, decision } = store.persistSession(sessionId, server, client, (f, reputation) =>
+        analyze(f, undefined, undefined, reputation),
       );
-
-      // Decision engine: verdict + per-card tri-state, computed from the full
-      // fingerprint and persisted alongside the session.
-      const decision = analyze(full, undefined, undefined, reputation);
-      store.upsertDecision(sessionId, decision);
 
       return {
         ok: true,

@@ -76,6 +76,34 @@ const MAX_TOTAL_CAPTURE_BYTES = 32 * 1024 * 1024; // hard ceiling on in-flight C
 const connCountByIp = new Map<string, number>();
 let totalCaptureBytes = 0;
 
+// Absolute ceiling on concurrent in-flight connections across ALL sources. The
+// per-IP cap alone can't stop a distributed flood, nor an IPv6 attacker who
+// owns 2^64 addresses in a single /64 and would otherwise multiply the per-IP
+// budget at will. This bounds total sockets so we hit a clean drop, not EMFILE.
+const MAX_TOTAL_CONN = 4096;
+let totalConns = 0;
+
+// Per-source key for the concurrency cap. IPv6 is grouped by its /64 prefix
+// (one allocation = 2^64 addresses), so a single IPv6 client can't bypass the
+// per-IP cap by rotating addresses; IPv4 keys on the full address. Best-effort
+// on compressed IPv6 forms — it only governs a DoS cap, never a security
+// identity (rate-limit / reputation still use the full resolved IP).
+function connCapKey(addr: string): string {
+  if (!addr) return '';
+  if (addr.includes(':')) return addr.split(':').slice(0, 4).join(':') + '::/64';
+  return addr;
+}
+
+// IP rendered into logs, redacted so a full client IP (personal data) is never
+// written to disk on an abusive-traffic warning. Keeps enough to spot a noisy
+// network without retaining the host.
+function redactIp(addr: string): string {
+  if (!addr) return '(unknown)';
+  if (addr.includes(':')) return addr.split(':').slice(0, 2).join(':') + ':…';
+  const o = addr.split('.');
+  return o.length === 4 ? `${o[0]}.${o[1]}.x.x` : '(redacted)';
+}
+
 function buildFingerprint(chunk: Buffer): TlsFingerprint | null {
   try {
     const parsed = parseClientHello(chunk);
@@ -112,7 +140,18 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
   const { tls: tlsOptions, alpnProtocols = ['http/1.1'], logger } = opts;
 
   return (handler: http.RequestListener, _serverOpts: unknown): http.Server => {
-    const httpServer = http.createServer({}, handler);
+    // Explicit limits on the embedded HTTP server: cap header size and set hard
+    // header/request timeouts so a slow or oversized header stream can't pin a
+    // connection (Node's defaults are lenient). Strict parser stays on.
+    const httpServer = http.createServer(
+      {
+        maxHeaderSize: 16 * 1024,
+        requestTimeout: 30_000,
+        headersTimeout: 10_000,
+        insecureHTTPParser: false,
+      },
+      handler,
+    );
 
     const tlsServer = tls.createServer({
       ...tlsOptions,
@@ -157,16 +196,28 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
     const tcpProxy = net.createServer({ allowHalfOpen: false }, (clientSocket: net.Socket) => {
       const realAddr = clientSocket.remoteAddress ?? '';
       const realPort = clientSocket.remotePort ?? 0;
+      const capKey = connCapKey(realAddr);
 
-      // Per-IP concurrency cap: one source can't open thousands of slow
-      // connections to exhaust sockets / capture-buffer memory (slowloris).
-      const ipCount = realAddr ? (connCountByIp.get(realAddr) ?? 0) : 0;
-      if (realAddr && ipCount >= MAX_CONN_PER_IP) {
-        logger?.warn?.('per-ip connection cap reached, dropping', realAddr);
+      // Global concurrency ceiling first: refuse new sockets past the hard limit
+      // (covers distributed / IPv6 floods that each stay under the per-source cap).
+      if (totalConns >= MAX_TOTAL_CONN) {
+        logger?.warn?.('global connection cap reached, dropping');
         clientSocket.destroy();
         return;
       }
-      if (realAddr) connCountByIp.set(realAddr, ipCount + 1);
+
+      // Per-source concurrency cap (keyed by IPv4 addr / IPv6 /64): one source
+      // can't open thousands of slow connections to exhaust sockets / capture-
+      // buffer memory (slowloris).
+      const ipCount = capKey ? (connCountByIp.get(capKey) ?? 0) : 0;
+      if (capKey && ipCount >= MAX_CONN_PER_IP) {
+        logger?.warn?.('per-ip connection cap reached, dropping', redactIp(realAddr));
+        clientSocket.destroy();
+        return;
+      }
+      totalConns++;
+      let countedGlobal = true;
+      if (capKey) connCountByIp.set(capKey, ipCount + 1);
 
       clientSocket.setKeepAlive(true, 30_000);
       // Drop connections that never send a ClientHello (port scans, slowloris):
@@ -188,15 +239,20 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
       const cleanup = () => {
         if (cleaned) return;
         cleaned = true;
-        // Release this connection's still-buffered bytes and per-IP slot.
+        // Release this connection's still-buffered bytes, its global slot and
+        // its per-source slot.
         if (bufferedHere) {
           totalCaptureBytes -= bufferedHere;
           bufferedHere = 0;
         }
-        if (realAddr) {
-          const n = (connCountByIp.get(realAddr) ?? 1) - 1;
-          if (n <= 0) connCountByIp.delete(realAddr);
-          else connCountByIp.set(realAddr, n);
+        if (countedGlobal) {
+          totalConns--;
+          countedGlobal = false;
+        }
+        if (capKey) {
+          const n = (connCountByIp.get(capKey) ?? 1) - 1;
+          if (n <= 0) connCountByIp.delete(capKey);
+          else connCountByIp.set(capKey, n);
         }
         // Only the transient handoff entry can be orphaned here (if the socket
         // dies before 'secureConnection' consumed it). The WeakMap entry, if

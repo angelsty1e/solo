@@ -304,11 +304,14 @@ describe('évasion — un bot ne doit jamais décrocher human/clean', () => {
       defaultConfig,
       AT,
     );
-    // NOTE: avec une IP résidentielle, trust_residential_ip (serveur) corrobore
-    // réellement → 'human' est défendable. Ce test fige le comportement ACTUEL et
-    // documente la frontière : si Johann veut durcir (exiger un 2e ancrage serveur),
-    // il deviendra rouge. Tel quel, on asserte seulement le bornage.
-    expect(['human', 'clean']).toContain(r.verdict);
+    // [F1 — DURCI] La frontière annoncée ici est désormais fermée : l'IP
+    // résidentielle est le SEUL ancrage serveur, et toute la corroboration
+    // non-liveness est forgeable (GPU/fonts/identité/voix) → le vouch POSITIF
+    // 'human' est refusé. Une IP résidentielle n'est pas une preuve d'humanité
+    // (un proxy résidentiel du commerce la déclenche aussi). Atterrissage : 'clean'
+    // (rien contre vous), jamais 'bot'.
+    expect(r.verdict).toBe('clean');
+    expect(r.verdict).not.toBe('human');
   });
 
   it("A6 — identité cohérente forgée + comportement forgé → pas 'bot', mais doc le pouvoir de 'human'", () => {
@@ -322,8 +325,11 @@ describe('évasion — un bot ne doit jamais décrocher human/clean', () => {
       AT,
     );
     expect(r.trustSignals.map((s) => s.id)).toContain('trust_identity_coherent');
-    // IP résidentielle propre → corroboration serveur réelle ; 'human' défendable.
-    expect(['human', 'clean']).toContain(r.verdict);
+    // [F1 — DURCI] trust_identity_coherent est lui-même FORGEABLE : la
+    // corroboration non-liveness ne tient qu'à la pile cliente forgeable, l'IP
+    // résidentielle restant le seul ancrage serveur → 'human' refusé, 'clean'.
+    expect(r.verdict).toBe('clean');
+    expect(r.verdict).not.toBe('human');
   });
 
   it("A10 [FINDING P1, fermé par rem. (e)] — proxy/VPN seul (0.4) + trust forgé ne doit pas décrocher 'human'", () => {
@@ -336,6 +342,46 @@ describe('évasion — un bot ne doit jamais décrocher human/clean', () => {
     expect(r.byLevel.find((l) => l.level === 2)?.hits.find((h) => h.id === 'ip_proxy')).toBeDefined();
     expect(r.verdict).not.toBe('human');
     expect(r.verdict).toBe('clean');
+  });
+
+  it("F1 [FINDING P2] — bot sur proxy RÉSIDENTIEL (ASN ISP ordinaire) + client forgé ne décroche pas 'human'", () => {
+    // Un proxy résidentiel du commerce (Bright Data/Oxylabs) ou un hôte compromis
+    // sort sur une ASN d'ISP ORDINAIRE non flaggée : isDatacenter=false ET
+    // isProxyHint=false → trust_residential_ip fire pour le BOT (ipFp() par défaut
+    // = "Orange SA", résidentielle confirmée). Le client est 100 % forgé
+    // (comportement organique + GPU/fonts/voix/identité cohérents). AVANT F1 :
+    // l'IP résidentielle servait d'unique ancrage serveur et le vouch POSITIF
+    // 'human' (le label le plus fort) était décerné à un bot. APRÈS F1 : l'IP
+    // résidentielle étant le SEUL ancrage serveur et toute la corroboration
+    // non-liveness étant forgeable, le vouch est refusé → 'clean' (jamais 'bot' :
+    // une IP résidentielle n'est pas une preuve de NON-humanité).
+    const r = runDecision(
+      { automation: cleanAutomation(), userAgent: CHROME_UA, tls: browserTls(), ip: ipFp(), client: forgedTrustClient() },
+      defaultConfig,
+      AT,
+    );
+    // L'IP résidentielle corrobore bien côté serveur (le bot ne contrôle pas ça)…
+    expect(r.trustSignals.map((s) => s.id)).toContain('trust_residential_ip');
+    // …mais ne suffit plus, à elle seule, à délivrer le label positif 'human'.
+    expect(r.verdict).toBe('clean');
+    expect(r.verdict).not.toBe('human');
+    expect(r.verdict).not.toBe('bot');
+  });
+
+  it("F1bis [anti-régression] — vrai humain organique sur IP résidentielle (liveness, SANS pile forgée) reste 'human'", () => {
+    // Le pendant légitime : un humain organique dont la corroboration ne repose
+    // PAS sur une pile forgeable (uniquement comportement + IP résidentielle)
+    // garde le label positif — sinon F1 créerait une rétrogradation injuste. Le
+    // crédit non-liveness vient ici de l'ancrage SERVEUR lui-même (résidentiel),
+    // pas d'une pile cliente forgeable → forgeableCorroborated=false → 'human'.
+    const organicOnly = { behavioral: forgedOrganicBehaviour() } as unknown as DecisionInput['client'];
+    const r = runDecision(
+      { automation: cleanAutomation(), userAgent: CHROME_UA, tls: browserTls(), ip: ipFp(), client: organicOnly },
+      defaultConfig,
+      AT,
+    );
+    expect(r.trustSignals.map((s) => s.id)).toContain('trust_residential_ip');
+    expect(r.verdict).toBe('human');
   });
 
   it("A7 — l'omission d'une surface (canvas null) n'échappe plus à la réputation", () => {
@@ -360,6 +406,40 @@ describe('évasion — un bot ne doit jamais décrocher human/clean', () => {
     expect(r.byLevel.find((l) => l.level === 3)?.hits.find((h) => h.id === 'env_render_surfaces_absent')).toBeUndefined();
     expect(r.byLevel.find((l) => l.level === 5)!.score).toBeCloseTo(1);
     expect(['bot', 'suspect']).toContain(r.verdict);
+  });
+
+  it("F2 [FINDING P3] — canvas+webgl null (SANS audio null) fait firer le signal N3 env_render_hashes_absent", () => {
+    // L'essaim annule la réputation N5 en envoyant canvas ET webgl à null (le store
+    // calcule l'empreinte sur ce couple → 0/0), mais garde audio non-null pour NE
+    // PAS déclencher env_render_surfaces_absent (qui exige les TROIS nulles). AVANT
+    // F2 : aucune trace N3, évasion silencieuse. APRÈS F2 : env_render_hashes_absent
+    // (présomption 0.2) fire dès que canvas+webgl sont nuls, audio présent ou non.
+    const client = forgedTrustClient({ canvas: null, webgl: null, audio: { available: true } });
+    const r = runDecision(
+      { automation: cleanAutomation(), userAgent: CHROME_UA, tls: browserTls(), ip: ipFp(), client },
+      defaultConfig,
+      AT,
+    );
+    const n3 = r.byLevel.find((l) => l.level === 3)!;
+    // Le nouveau signal N3 fire…
+    expect(n3.hits.find((h) => h.id === 'env_render_hashes_absent')).toBeDefined();
+    // …alors que env_render_surfaces_absent (3 nulles) ne fire PAS (audio présent).
+    expect(n3.hits.find((h) => h.id === 'env_render_surfaces_absent')).toBeUndefined();
+    // Présomption modérée (0.2) : ne suffit JAMAIS, seule, à classer 'bot'.
+    expect(n3.score).toBeCloseTo(0.2);
+  });
+
+  it("F2bis [anti-FP] — extension anti-fingerprint (canvas+webgl null) seule ne bascule pas 'bot'", () => {
+    // Une extension vie privée légitime peut nuller canvas+webgl. Le poids 0.2 est
+    // une PRÉSOMPTION, pas un aveu : à lui seul il ne doit jamais inculper 'bot'.
+    const client = forgedTrustClient({ canvas: null, webgl: null });
+    const r = runDecision(
+      { automation: cleanAutomation(), userAgent: CHROME_UA, tls: browserTls(), ip: ipFp(), client },
+      defaultConfig,
+      AT,
+    );
+    expect(r.byLevel.find((l) => l.level === 3)?.hits.find((h) => h.id === 'env_render_hashes_absent')).toBeDefined();
+    expect(r.verdict).not.toBe('bot');
   });
 });
 

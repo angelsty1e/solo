@@ -116,96 +116,128 @@ const upsertClientColsSQL = `
   WHERE id = @id
 `;
 
+type Db = ReturnType<typeof getDb>;
+
+// ─── Write helpers ───────────────────────────────────────────────────────────
+// Each writes one area's columns + JSON blob. They assume the `sessions` shell
+// row already exists and that they run INSIDE a transaction — so they can be
+// composed either one-at-a-time (the upsert* wrappers below) or all together in
+// a single atomic commit (persistSession).
+
+function writeServerCols(db: Db, sessionId: string, server: ServerFingerprint): void {
+  db.prepare(upsertServerColsSQL).run({
+    id: sessionId,
+    capturedAt: server.capturedAt,
+    ip: server.ip?.ip ?? null,
+    asn: server.ip?.asn ?? null,
+    asnOrg: server.ip?.asnOrganization ?? null,
+    country: server.ip?.country ?? null,
+    isDatacenter: server.ip?.isDatacenter == null ? null : server.ip.isDatacenter ? 1 : 0,
+    isProxyHint: server.ip?.isProxyHint == null ? null : server.ip.isProxyHint ? 1 : 0,
+    reverseDns: server.ip?.reverseDns ?? null,
+    isTorExit: server.ip?.isTorExit == null ? null : server.ip.isTorExit ? 1 : 0,
+    tcpRttMs: server.ip?.tcpRttMs ?? null,
+    ja3: server.tls?.ja3 ?? null,
+    ja3Hash: server.tls?.ja3Hash ?? null,
+    ja4: server.tls?.ja4 ?? null,
+    tlsVersion: server.tls?.version ?? null,
+    sni: server.tls?.sni ?? null,
+    alpn: server.tls?.alpn.join(',') ?? null,
+    userAgent: server.http?.userAgent ?? null,
+    httpVersion: server.http?.httpVersion ?? null,
+    acceptLanguage: server.http?.acceptLanguage ?? null,
+    secFetchSite: server.http?.secFetch?.site ?? null,
+    secFetchMode: server.http?.secFetch?.mode ?? null,
+    secFetchDest: server.http?.secFetch?.dest ?? null,
+    secFetchUser: server.http?.secFetch?.user ?? null,
+  });
+
+  if (server.tls) {
+    db.prepare(
+      `INSERT INTO server_tls (session_id, data) VALUES (?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET data = excluded.data`,
+    ).run(sessionId, JSON.stringify(server.tls));
+  }
+  if (server.http) {
+    db.prepare(
+      `INSERT INTO server_http (session_id, data) VALUES (?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET data = excluded.data`,
+    ).run(sessionId, JSON.stringify(server.http));
+  }
+  if (server.ip) {
+    db.prepare(
+      `INSERT INTO server_ip (session_id, data) VALUES (?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET data = excluded.data`,
+    ).run(sessionId, JSON.stringify(server.ip));
+  }
+}
+
+function writeClientCols(db: Db, sessionId: string, client: ClientFingerprint): void {
+  db.prepare(upsertClientColsSQL).run({
+    id: sessionId,
+    collectedAt: client.collectedAt,
+    durationMs: Math.round(client.durationMs),
+    platform: client.navigator?.platform ?? null,
+    vendor: client.navigator?.vendor ?? null,
+    language: client.navigator?.language ?? null,
+    timezone: client.locale?.timezone ?? null,
+    screenW: client.screen?.width ?? null,
+    screenH: client.screen?.height ?? null,
+    dpr: client.screen?.devicePixelRatio ?? null,
+    webdriver: client.automation?.webdriver == null ? null : client.automation.webdriver ? 1 : 0,
+    canvasHash: client.canvas?.dataUrlHash ?? null,
+    webglHash: client.webgl?.parametersHash ?? null,
+    webglRenderer: client.webgl?.unmaskedRenderer ?? client.webgl?.renderer ?? null,
+    audioHash: client.audio?.oscillatorHash ?? null,
+    fontsCount: client.fonts?.detectedFonts.length ?? null,
+  });
+
+  db.prepare(
+    `INSERT INTO client_full (session_id, data) VALUES (?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET data = excluded.data`,
+  ).run(sessionId, JSON.stringify(client));
+}
+
+// Persist the decision-engine verdict: full JSON in `decisions`, plus the
+// indexable synthesis (verdict, score, …) flattened onto `sessions`.
+function writeDecisionCols(db: Db, sessionId: string, decision: DecisionResult): void {
+  db.prepare(
+    `INSERT INTO decisions (session_id, data, computed_at) VALUES (?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET data = excluded.data, computed_at = excluded.computed_at`,
+  ).run(sessionId, JSON.stringify(decision), decision.computedAt);
+
+  db.prepare(
+    `UPDATE sessions SET verdict = @verdict, bot_score = @score, trust_score = @trust,
+       decision_forced = @forced, decision_version = @version
+     WHERE id = @id`,
+  ).run({
+    id: sessionId,
+    verdict: decision.verdict,
+    score: decision.score,
+    trust: decision.trustScore ?? 0,
+    forced: decision.forced ? 1 : 0,
+    version: decision.configVersion,
+  });
+}
+
 export function upsertServer(sessionId: string, server: ServerFingerprint): void {
   const db = getDb();
   const now = nowMs();
   const exp = now + TTL_MS;
-
-  const tx = db.transaction(() => {
+  db.transaction(() => {
     db.prepare(upsertSessionShellSQL).run({ id: sessionId, now, exp });
-
-    db.prepare(upsertServerColsSQL).run({
-      id: sessionId,
-      capturedAt: server.capturedAt,
-      ip: server.ip?.ip ?? null,
-      asn: server.ip?.asn ?? null,
-      asnOrg: server.ip?.asnOrganization ?? null,
-      country: server.ip?.country ?? null,
-      isDatacenter: server.ip?.isDatacenter == null ? null : server.ip.isDatacenter ? 1 : 0,
-      isProxyHint: server.ip?.isProxyHint == null ? null : server.ip.isProxyHint ? 1 : 0,
-      reverseDns: server.ip?.reverseDns ?? null,
-      isTorExit: server.ip?.isTorExit == null ? null : server.ip.isTorExit ? 1 : 0,
-      tcpRttMs: server.ip?.tcpRttMs ?? null,
-      ja3: server.tls?.ja3 ?? null,
-      ja3Hash: server.tls?.ja3Hash ?? null,
-      ja4: server.tls?.ja4 ?? null,
-      tlsVersion: server.tls?.version ?? null,
-      sni: server.tls?.sni ?? null,
-      alpn: server.tls?.alpn.join(',') ?? null,
-      userAgent: server.http?.userAgent ?? null,
-      httpVersion: server.http?.httpVersion ?? null,
-      acceptLanguage: server.http?.acceptLanguage ?? null,
-      secFetchSite: server.http?.secFetch?.site ?? null,
-      secFetchMode: server.http?.secFetch?.mode ?? null,
-      secFetchDest: server.http?.secFetch?.dest ?? null,
-      secFetchUser: server.http?.secFetch?.user ?? null,
-    });
-
-    if (server.tls) {
-      db.prepare(
-        `INSERT INTO server_tls (session_id, data) VALUES (?, ?)
-         ON CONFLICT(session_id) DO UPDATE SET data = excluded.data`,
-      ).run(sessionId, JSON.stringify(server.tls));
-    }
-    if (server.http) {
-      db.prepare(
-        `INSERT INTO server_http (session_id, data) VALUES (?, ?)
-         ON CONFLICT(session_id) DO UPDATE SET data = excluded.data`,
-      ).run(sessionId, JSON.stringify(server.http));
-    }
-    if (server.ip) {
-      db.prepare(
-        `INSERT INTO server_ip (session_id, data) VALUES (?, ?)
-         ON CONFLICT(session_id) DO UPDATE SET data = excluded.data`,
-      ).run(sessionId, JSON.stringify(server.ip));
-    }
-  });
-  tx();
+    writeServerCols(db, sessionId, server);
+  })();
 }
 
 export function upsertClient(sessionId: string, client: ClientFingerprint): FullFingerprint {
   const db = getDb();
   const now = nowMs();
   const exp = now + TTL_MS;
-
-  const tx = db.transaction(() => {
+  db.transaction(() => {
     db.prepare(upsertSessionShellSQL).run({ id: sessionId, now, exp });
-
-    db.prepare(upsertClientColsSQL).run({
-      id: sessionId,
-      collectedAt: client.collectedAt,
-      durationMs: Math.round(client.durationMs),
-      platform: client.navigator?.platform ?? null,
-      vendor: client.navigator?.vendor ?? null,
-      language: client.navigator?.language ?? null,
-      timezone: client.locale?.timezone ?? null,
-      screenW: client.screen?.width ?? null,
-      screenH: client.screen?.height ?? null,
-      dpr: client.screen?.devicePixelRatio ?? null,
-      webdriver: client.automation?.webdriver == null ? null : client.automation.webdriver ? 1 : 0,
-      canvasHash: client.canvas?.dataUrlHash ?? null,
-      webglHash: client.webgl?.parametersHash ?? null,
-      webglRenderer: client.webgl?.unmaskedRenderer ?? client.webgl?.renderer ?? null,
-      audioHash: client.audio?.oscillatorHash ?? null,
-      fontsCount: client.fonts?.detectedFonts.length ?? null,
-    });
-
-    db.prepare(
-      `INSERT INTO client_full (session_id, data) VALUES (?, ?)
-       ON CONFLICT(session_id) DO UPDATE SET data = excluded.data`,
-    ).run(sessionId, JSON.stringify(client));
-  });
-  tx();
+    writeClientCols(db, sessionId, client);
+  })();
 
   return selectFull(sessionId) ?? {
     sessionId,
@@ -214,30 +246,51 @@ export function upsertClient(sessionId: string, client: ClientFingerprint): Full
   };
 }
 
-// Persist the decision-engine verdict: full JSON in `decisions`, plus the
-// indexable synthesis (verdict, score, …) flattened onto `sessions`.
 export function upsertDecision(sessionId: string, decision: DecisionResult): void {
   const db = getDb();
-  const tx = db.transaction(() => {
-    db.prepare(
-      `INSERT INTO decisions (session_id, data, computed_at) VALUES (?, ?, ?)
-       ON CONFLICT(session_id) DO UPDATE SET data = excluded.data, computed_at = excluded.computed_at`,
-    ).run(sessionId, JSON.stringify(decision), decision.computedAt);
+  db.transaction(() => {
+    writeDecisionCols(db, sessionId, decision);
+  })();
+}
 
-    db.prepare(
-      `UPDATE sessions SET verdict = @verdict, bot_score = @score, trust_score = @trust,
-         decision_forced = @forced, decision_version = @version
-       WHERE id = @id`,
-    ).run({
-      id: sessionId,
-      verdict: decision.verdict,
-      score: decision.score,
-      trust: decision.trustScore ?? 0,
-      forced: decision.forced ? 1 : 0,
-      version: decision.configVersion,
-    });
-  });
-  tx();
+// Atomic end-to-end persistence of one /collect session. Replaces the old
+// 3-call sequence (upsertServer → upsertClient → upsertDecision), which ran in
+// THREE separate transactions: a crash between them could leave a session
+// persisted without its decision (or skew reputation). Here:
+//   1. reputation is read BEFORE the session is written → it never counts itself
+//      (a replayed session can no longer inflate its own distinct-IP score);
+//   2. the full fingerprint is assembled in memory → the decision is computed on
+//      exactly what we persist, never on a partial/fallback-empty DB read;
+//   3. server + client + decision commit in ONE transaction → all-or-nothing.
+// `decide` is the injection point for the (pure) decision engine, kept out of
+// the store so this module stays free of decision-policy imports.
+export function persistSession(
+  sessionId: string,
+  server: ServerFingerprint,
+  client: ClientFingerprint,
+  decide: (full: FullFingerprint, reputation: ReputationStats) => DecisionResult,
+): { full: FullFingerprint; decision: DecisionResult } {
+  const db = getDb();
+  const now = nowMs();
+  const exp = now + TTL_MS;
+
+  const reputation = fingerprintReputation(
+    client.canvas?.dataUrlHash ?? null,
+    client.webgl?.parametersHash ?? null,
+  );
+
+  const full: FullFingerprint = { sessionId, server, client, decision: null };
+  const decision = decide(full, reputation);
+  full.decision = decision;
+
+  db.transaction(() => {
+    db.prepare(upsertSessionShellSQL).run({ id: sessionId, now, exp });
+    writeServerCols(db, sessionId, server);
+    writeClientCols(db, sessionId, client);
+    writeDecisionCols(db, sessionId, decision);
+  })();
+
+  return { full, decision };
 }
 
 // Cross-session reputation of a canvas+WebGL fingerprint within the retention
@@ -271,6 +324,10 @@ export function get(sessionId: string): FullFingerprint | null {
   return selectFull(sessionId);
 }
 
+// Internal/diagnostic only — exercised by the store tests. This is an
+// ENUMERATION primitive: it returns session ids in bulk, which breaks the
+// unguessable-capability model the recap/export URLs rely on. It must NEVER be
+// wired to an HTTP route (and there is intentionally no endpoint that calls it).
 export function list(): Array<{ sessionId: string; capturedAt: string }> {
   const db = getDb();
   const rows = db
@@ -284,15 +341,21 @@ export function list(): Array<{ sessionId: string; capturedAt: string }> {
   return rows.map((r) => ({ sessionId: r.id, capturedAt: r.server_captured_at ?? '' }));
 }
 
+function sweepExpired(): void {
+  try {
+    const db = getDb();
+    db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(nowMs());
+  } catch {
+    // DB may be closed already during shutdown.
+  }
+}
+
 export function startSweeper(): NodeJS.Timeout {
-  return setInterval(() => {
-    try {
-      const db = getDb();
-      db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(nowMs());
-    } catch {
-      // DB may be closed already during shutdown.
-    }
-  }, 5 * 60 * 1000).unref();
+  // Sweep once immediately: after a restart, sessions that expired while the
+  // process was down would otherwise sit in the DB (still personal data, past
+  // their retention) for up to a full interval before the first tick fires.
+  sweepExpired();
+  return setInterval(sweepExpired, 5 * 60 * 1000).unref();
 }
 
 function emptyClient(sessionId: string): ClientFingerprint {

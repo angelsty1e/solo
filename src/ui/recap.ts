@@ -477,7 +477,17 @@ async function render(): Promise<void> {
     );
     return;
   }
-  const full = (await res.json()) as FullFingerprint;
+  // Parse défensif : un corps tronqué/non-JSON ne doit pas tomber dans le catch
+  // global (qui affiche « voir la console »). On montre une erreur explicite.
+  let full: FullFingerprint;
+  try {
+    full = (await res.json()) as FullFingerprint;
+  } catch {
+    content.replaceChildren(
+      errorPanel('Réponse serveur illisible — le récapitulatif n’a pas pu être chargé. Réessaie dans un instant.'),
+    );
+    return;
+  }
   CARD_VERDICTS = new Map((full.decision?.cards ?? []).map((c) => [c.id, c]));
   content.replaceChildren();
 
@@ -491,7 +501,7 @@ async function render(): Promise<void> {
   // ─── Côté serveur ──────────────────────────────────────────────────────────
   content.appendChild(groupTitle('Côté serveur — ce que le réseau révèle'));
 
-  const tls = full.server.tls;
+  const tls = full.server?.tls;
   if (tls) {
     content.appendChild(
       section(
@@ -518,7 +528,7 @@ async function render(): Promise<void> {
     content.appendChild(section('TLS', [row('Capture', 'parse failed or absent')], undefined, 'tls'));
   }
 
-  const http = full.server.http;
+  const http = full.server?.http;
   if (http) {
     const incon = document.createElement('td');
     incon.appendChild(tags(http.inconsistencies, 'warn'));
@@ -546,7 +556,7 @@ async function render(): Promise<void> {
     );
   }
 
-  const ip = full.server.ip;
+  const ip = full.server?.ip;
   if (ip) {
     content.appendChild(
       section(
@@ -571,37 +581,41 @@ async function render(): Promise<void> {
   // ─── Côté navigateur ───────────────────────────────────────────────────────
   content.appendChild(groupTitle('Côté navigateur — ce que la page mesure'));
 
-  const n = full.client.navigator;
-  content.appendChild(
-    section(
-      'Navigator',
-      [
-        row('User-Agent', n.userAgent),
-        row('Platform', n.platform),
-        row('Vendor', n.vendor),
-        row('Language', `${n.language} (${n.languages.join(', ')})`),
-        row('hardwareConcurrency', n.hardwareConcurrency),
-        row('deviceMemory', n.deviceMemory),
-        row('maxTouchPoints', n.maxTouchPoints),
-        row('cookieEnabled', n.cookieEnabled),
-        row('doNotTrack', n.doNotTrack),
-        row('userAgentData', n.uaData),
-      ],
-      undefined,
-      'navigator',
-    ),
-  );
+  const n = full.client?.navigator;
+  if (n) {
+    content.appendChild(
+      section(
+        'Navigator',
+        [
+          row('User-Agent', n.userAgent),
+          row('Platform', n.platform),
+          row('Vendor', n.vendor),
+          row('Language', `${n.language} (${(n.languages ?? []).join(', ')})`),
+          row('hardwareConcurrency', n.hardwareConcurrency),
+          row('deviceMemory', n.deviceMemory),
+          row('maxTouchPoints', n.maxTouchPoints),
+          row('cookieEnabled', n.cookieEnabled),
+          row('doNotTrack', n.doNotTrack),
+          row('userAgentData', n.uaData),
+        ],
+        undefined,
+        'navigator',
+      ),
+    );
+  } else {
+    content.appendChild(section('Navigator', [row('Capture', 'donnée absente')], undefined, 'navigator'));
+  }
 
   // Matériel : agrège les signaux dispersés (CPU navigator, RAM navigator, GPU
   // WebGL) en une vue lisible. Tout est déduit du navigateur, jamais exact.
-  const gw = full.client.webgl;
+  const gw = full.client?.webgl;
   content.appendChild(
     section(
       'Matériel (déduit)',
       [
-        row('Processeur (déduit)', inferCpu(n, full.client.webgl, full.client.webgpu)),
-        row('CPU — cœurs logiques', n.hardwareConcurrency ? `${n.hardwareConcurrency} cœurs` : '—'),
-        row('RAM (deviceMemory)', n.deviceMemory ? `${n.deviceMemory} Go (plafonné par le navigateur)` : '—'),
+        row('Processeur (déduit)', n ? inferCpu(n, full.client?.webgl ?? null, full.client?.webgpu ?? null) : null),
+        row('CPU — cœurs logiques', n?.hardwareConcurrency ? `${n.hardwareConcurrency} cœurs` : '—'),
+        row('RAM (deviceMemory)', n?.deviceMemory ? `${n.deviceMemory} Go (plafonné par le navigateur)` : '—'),
         row('GPU — fabricant', gw?.unmaskedVendor ?? gw?.vendor ?? null),
         row('GPU — modèle', gw?.unmaskedRenderer ?? gw?.renderer ?? null),
         row('GPU — taille texture max', gw?.maxTextureSize ?? null),
@@ -611,17 +625,21 @@ async function render(): Promise<void> {
     ),
   );
 
-  const s = full.client.screen;
-  content.appendChild(
-    section('Screen / Window', [
-      row('Screen', `${s.width} × ${s.height} (avail ${s.availWidth} × ${s.availHeight})`),
-      row('Color/Pixel depth', `${s.colorDepth} / ${s.pixelDepth}`),
-      row('devicePixelRatio', dprLabel(s.devicePixelRatio) ?? s.devicePixelRatio),
-      row('Orientation', s.orientation),
-      row('Inner', `${s.windowInnerWidth} × ${s.windowInnerHeight}`),
-      row('Outer', `${s.windowOuterWidth} × ${s.windowOuterHeight}`),
-    ], undefined, 'screen'),
-  );
+  const s = full.client?.screen;
+  if (s) {
+    content.appendChild(
+      section('Screen / Window', [
+        row('Screen', `${s.width} × ${s.height} (avail ${s.availWidth} × ${s.availHeight})`),
+        row('Color/Pixel depth', `${s.colorDepth} / ${s.pixelDepth}`),
+        row('devicePixelRatio', dprLabel(s.devicePixelRatio) ?? s.devicePixelRatio),
+        row('Orientation', s.orientation),
+        row('Inner', `${s.windowInnerWidth} × ${s.windowInnerHeight}`),
+        row('Outer', `${s.windowOuterWidth} × ${s.windowOuterHeight}`),
+      ], undefined, 'screen'),
+    );
+  } else {
+    content.appendChild(section('Screen / Window', [row('Capture', 'donnée absente')], undefined, 'screen'));
+  }
 
   const l = full.client.locale;
   content.appendChild(

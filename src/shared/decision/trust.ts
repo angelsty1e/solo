@@ -172,6 +172,31 @@ export interface TrustResult {
   // 'human' requires this; an uncorroborated-by-the-server credit caps at 'clean'
   // (NOT 'bot' — a VPN is not proof of *non*-humanity either). See runDecision.
   serverCorroborated: boolean;
+  // [F1] At least one CLIENT-FORGEABLE, non-liveness trust signal corroborated
+  // (real-GPU string, rich fonts, coherent identity, voices, media devices, hw
+  // video). The lone server anchor for 'human' today is `trust_residential_ip`,
+  // but that fires for a BOT too: a commercial residential proxy (Bright Data /
+  // Oxylabs…) or a compromised host egresses on an ordinary ISP ASN that GeoIP
+  // reads as "not datacenter / not proxy". So a fully-forged client (organic-
+  // looking behaviour + a forged GPU/fonts/identity stack) on such an IP would
+  // otherwise mint the positive 'human' vouch off a residential IP that proves
+  // nothing. When residential IP is the SOLE server corroboration AND the rest of
+  // the non-liveness corroboration is this forgeable stack, the engine caps at
+  // 'clean': "nothing against you", but no positive vouch of humanity. The genuine
+  // minimal organic human (liveness + residential, no forged passive stack) keeps
+  // 'human' — its corroboration rests on the server anchor itself, not on forgeable
+  // padding. 'clean' (not 'suspect'/'bot'): a residential IP is no proof of
+  // *non*-humanity either, so this must never penalise. See runDecision.
+  forgeableCorroborated: boolean;
+  // [F1] At least one NON-forgeable trust signal OTHER than `trust_residential_ip`
+  // corroborated. Today no such signal exists — residential IP is the lone
+  // server-derived credit — so this is currently ALWAYS false. It exists so the
+  // engine expresses its intent self-documentingly: 'human' off a forgeable stack
+  // is refused only WHILE residential IP is the SOLE server anchor. The day a
+  // second, stronger server-side trust signal is added (e.g. an attested device),
+  // this turns true and legitimately re-opens 'human' for a forgeable-corroborated
+  // client — no engine change needed.
+  serverCorroboratedBeyondResidentialIp: boolean;
 }
 
 export function computeTrust(
@@ -183,6 +208,8 @@ export function computeTrust(
   let liveness = false;
   let corroborated = false;
   let serverCorroborated = false;
+  let forgeableCorroborated = false; // [F1] a forgeable, non-liveness signal fired
+  let serverCorroboratedBeyondResidentialIp = false; // [F1] a server signal ≠ residential IP
   // Sum forgeable and non-forgeable credit separately: the full sum earns the
   // positive 'human' label, but only a capped slice of the *forgeable* part may
   // offset server-side suspicion (a bot can replicate the whole client payload).
@@ -194,14 +221,31 @@ export function computeTrust(
     const weight = cfg.weights[def.id] ?? 0;
     signals.push({ id: def.id, label: def.label, weight, evidence });
     if (def.liveness) liveness = true;
-    else corroborated = true; // an independent (non-liveness) signal fired
+    else {
+      corroborated = true; // an independent (non-liveness) signal fired
+      // [F1] track whether that independent corroboration is itself forgeable: a
+      // forged client can stack GPU/fonts/identity/voices around a residential IP.
+      if (def.clientForgeable) forgeableCorroborated = true;
+    }
     if (def.clientForgeable) forgeableSum += weight;
     else {
       trustedSum += weight;
       serverCorroborated = true; // a non-forgeable (server-derived) signal fired
+      // [F1] residential IP is the lone server anchor today; any OTHER server
+      // signal would be a stronger corroboration that re-opens 'human'.
+      if (def.id !== 'trust_residential_ip') serverCorroboratedBeyondResidentialIp = true;
     }
   }
   const score = Math.min(1, forgeableSum + trustedSum);
   const offsetScore = Math.min(1, trustedSum + Math.min(forgeableSum, cfg.maxForgeableOffset));
-  return { score, offsetScore, signals, liveness, corroborated, serverCorroborated };
+  return {
+    score,
+    offsetScore,
+    signals,
+    liveness,
+    corroborated,
+    serverCorroborated,
+    forgeableCorroborated,
+    serverCorroboratedBeyondResidentialIp,
+  };
 }

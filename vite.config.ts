@@ -10,7 +10,10 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, 'dist/client'),
     emptyOutDir: true,
-    sourcemap: true,
+    // No sourcemaps in the shipped bundle: they're not needed at runtime and
+    // serve the de-minified client source (a clean reverse-engineering aid)
+    // from the public static root. Re-enable locally for debugging if needed.
+    sourcemap: false,
     rollupOptions: {
       input: {
         index: path.resolve(__dirname, 'src/ui/index.html'),

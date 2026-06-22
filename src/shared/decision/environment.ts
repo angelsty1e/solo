@@ -105,6 +105,28 @@ export const LEVEL3: SignalDef[] = [
         : null;
     },
   },
+  {
+    // [F2] canvas ET webgl nuls, SANS exiger audio nul. C'est EXACTEMENT la
+    // combinaison qui annule la réputation cross-session N5 : le store calcule
+    // l'empreinte sur le couple (canvas, webgl) ; un essaim qui envoie ces deux
+    // hachages à null (mais garde audio non-nul pour ne pas déclencher
+    // env_render_surfaces_absent, qui exige les TROIS) se rend invisible à N5
+    // (fpDistinctIps = 0) sans laisser de trace ici. Ce signal ferme ce trou :
+    // l'omission des deux surfaces d'empreinte est désormais une présomption en
+    // soi. Poids MODÉRÉ (0.2 = présomption, pas un aveu) : une extension
+    // anti-fingerprint légitime peut nuller canvas+webgl ; à 0.2 ce signal seul
+    // ne fait JAMAIS basculer 'bot' (seuil bloc 0.8) — il ne pèse qu'empilé.
+    id: 'env_render_hashes_absent',
+    label: 'Canvas et WebGL tous deux absents (empreinte de rendu nulle)',
+    level: 3,
+    detect: (i) => {
+      const c = i.client;
+      if (!c) return null;
+      return c.canvas === null && c.webgl === null
+        ? ['canvas + webgl simultanément absents (annule l’empreinte de rendu / la réputation N5)']
+        : null;
+    },
+  },
 
   // ── fonts : environnement nu ──────────────────────────────────────────────
   {
@@ -294,6 +316,7 @@ export const LEVEL3_CARD: Record<string, string> = {
   env_uadata_incoherent: 'navigator',
   env_software_gpu: 'hardware',
   env_render_surfaces_absent: 'hardware',
+  env_render_hashes_absent: 'hardware',
   env_fonts_minimal: 'fonts',
   env_no_hw_video_decode: 'mediaCapabilities',
   env_speech_no_voices: 'speech',

@@ -633,9 +633,18 @@ function fullInput(over: Partial<DecisionInput> = {}): DecisionInput {
 }
 
 describe('trust credit & human verdict', () => {
-  it('a coherent human with organic behaviour → verdict human, high trust', () => {
+  it('a coherent human with organic behaviour → cleared (clean), high trust', () => {
+    // [F1] humanClient stacks FORGEABLE passive credit (a real-GPU string) on top
+    // of liveness + a residential IP. Since residential IP is the SOLE server
+    // anchor and the corroboration rests on that forgeable stack, the positive
+    // 'human' vouch is withheld — a residential IP is not proof of humanity (a
+    // commercial residential proxy fires it too). The right landing is 'clean'
+    // ("nothing against you"), NEVER 'bot'. The genuine label-earning case is the
+    // minimal organic human (liveness + residential, no forged passive stack) —
+    // see decision-contract.test.ts. Trust score stays high either way.
     const r = runDecision(fullInput(), defaultConfig, '2026-06-01T00:00:00.000Z');
-    expect(r.verdict).toBe('human');
+    expect(r.verdict).toBe('clean');
+    expect(r.verdict).not.toBe('bot');
     expect(r.trustScore).toBeGreaterThanOrEqual(0.5);
     expect(r.trustSignals.find((t) => t.id === 'trust_behavior_human')).toBeDefined();
   });
@@ -727,13 +736,18 @@ describe('trust credit — forgery resistance', () => {
     expect(r.verdict).not.toBe('bot');
   });
 
-  it('a residential human with full forgeable credit still earns the positive human label', () => {
-    // The fix gates 'human' on a SERVER-corroborated credit; this is that anchor.
-    // A real residential IP (ipFp default: not datacenter/proxy/Tor) fires
-    // trust_residential_ip → serverCorroborated → the positive label is allowed.
+  it('a residential client whose corroboration is a FORGEABLE stack → clean, not human (F1)', () => {
+    // [F1] Pre-F1 this earned 'human' because trust_residential_ip (server) was
+    // treated as a sufficient anchor. But that signal fires for a commercial
+    // residential proxy too, and here the WHOLE non-liveness corroboration is the
+    // forgeable client stack (real-GPU string). Residential IP being the SOLE
+    // server anchor, the positive vouch is withheld → 'clean' (never 'bot'). The
+    // label-earning path is now the minimal organic human (no forged passive
+    // stack) — locked in decision-contract.test.ts.
     const r = runDecision(fullInput(), defaultConfig, '2026-06-01T00:00:00.000Z');
     expect(r.trustSignals.find((t) => t.id === 'trust_residential_ip')).toBeDefined();
-    expect(r.verdict).toBe('human');
+    expect(r.verdict).toBe('clean');
+    expect(r.verdict).not.toBe('bot');
   });
 });
 

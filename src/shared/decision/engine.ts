@@ -105,7 +105,25 @@ export function runDecision(
     // 'clean': "nothing against you", but not a positive vouch. A genuine VPN
     // human lands here too (a VPN is not proof of humanity), and crucially still
     // never 'bot'.
-    trust.serverCorroborated
+    trust.serverCorroborated &&
+    // [F1] …but `trust_residential_ip` is the LONE server anchor, and it fires for
+    // a BOT too: a commercial residential proxy (Bright Data / Oxylabs…) or a
+    // compromised host egresses on an ordinary ISP ASN that GeoIP reads as "not
+    // datacenter / not proxy". So a fully-forged client (organic-looking behaviour
+    // + a forged GPU/fonts/identity/voices stack) on such an IP would mint 'human'
+    // with the residential IP as its only non-forgeable evidence — a residential
+    // IP is NOT proof of humanity. We therefore refuse the positive vouch when the
+    // SOLE server corroboration is the residential IP AND the rest of the
+    // non-liveness corroboration is the forgeable client stack (`forgeableCorroborated`):
+    // that combination is byte-for-byte replayable by a scripted bot. It falls to
+    // 'clean' — "nothing against you", but no vouch — never 'suspect'/'bot' (a
+    // residential IP is no proof of *non*-humanity either, so it must not penalise).
+    //   • The genuine minimal organic human (liveness + residential, NO forged
+    //     passive stack) keeps 'human': its corroboration rests on the server
+    //     anchor itself, not on forgeable padding → forgeableCorroborated=false.
+    //   • A future server-derived trust signal beyond residential IP makes
+    //     `serverCorroboratedBeyondResidentialIp` true and re-opens 'human' here.
+    !(trust.forgeableCorroborated && !trust.serverCorroboratedBeyondResidentialIp)
   ) {
     verdict = 'human';
   } else {

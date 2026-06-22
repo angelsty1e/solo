@@ -22,7 +22,7 @@ import { signalsForLevel } from './registry.js';
 // override at runtime (see resolveConfig). The `version` is persisted with each
 // verdict so a decision can always be traced back to the rules that produced it.
 export const defaultConfig: DecisionConfig = {
-  version: 'n1n2n3n4n5-trust-2026.06.6',
+  version: 'n1n2n3n4n5-trust-2026.06.7',
   levels: [
     {
       level: 1,
@@ -73,6 +73,10 @@ export const defaultConfig: DecisionConfig = {
         env_uadata_incoherent: 0.3,
         env_software_gpu: 0.65,
         env_render_surfaces_absent: 0.5,
+        // [F2] canvas+webgl nuls (sans exiger audio) = l'omission qui annule la
+        // réputation N5. Présomption modérée (0.2) : ne bascule jamais 'bot' seule
+        // (extension anti-fingerprint légitime) ; ne pèse qu'empilée.
+        env_render_hashes_absent: 0.2,
         env_fonts_minimal: 0.3,
         env_no_hw_video_decode: 0.15,
         env_speech_no_voices: 0.2,
