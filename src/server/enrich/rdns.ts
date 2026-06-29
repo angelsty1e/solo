@@ -20,6 +20,16 @@ import { isPrivateOrReservedIp } from './ip.js';
 // Best-effort PTR lookup. Capped at ~250ms so a slow resolver can't stall
 // `/collect`. Result cached for an hour — same IP hits us repeatedly during
 // a behavioral session and we don't want N×lookups.
+//
+// NOT forward-confirmed (CWE-350): the PTR record is set by the IP's owner, and
+// we take names[0] without resolving it back to the IP. This is deliberate and
+// safe HERE because the derived `rdns_hosting` signal is ADVISORY and strictly
+// ONE-DIRECTIONAL — it only ADDS bot suspicion, never grants trust. A forged PTR
+// can therefore at most suppress suspicion on the attacker's OWN IP (something a
+// hosting customer can already do, and which ASN-number classification still
+// catches); it can never mint a positive verdict or poison a victim. The day
+// rDNS feeds a trust/positive decision, switch to forward-confirmed rDNS (FCrDNS:
+// resolve the PTR name's A/AAAA and require it to map back to `ip`).
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 // Bound the cache so a flood of distinct source IPs can't grow it without
@@ -45,10 +55,22 @@ export async function reverseDns(ip: string, timeoutMs = 250): Promise<string | 
   const cached = cache.get(ip);
   if (cached && cached.expiresAt > now) return cached.value;
 
+  // Cap the lookup so a slow/hostile resolver can't stall /collect. Capture the
+  // timer to clear it on the fast-success path (otherwise it holds an event-loop
+  // ref for up to timeoutMs) and unref it so it can never keep the process alive.
+  // (The underlying c-ares query isn't cancellable and may finish in the
+  // background — harmless given the cache + the global rate limits.)
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+    timer.unref?.();
+  });
   const result = await Promise.race<string | null>([
     dns.reverse(ip).then((names) => names[0] ?? null).catch(() => null),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
-  ]);
+    timeout,
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
   cacheStore(ip, result, now);
   return result;
 }

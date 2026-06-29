@@ -86,14 +86,37 @@ let totalConns = 0;
 // Per-source key, shared by the concurrency cap AND the request rate-limit
 // (rateLimitKeyForSocket). IPv6 is grouped by its /64 prefix (one allocation =
 // 2^64 addresses), so a single IPv6 client can't bypass either limit by rotating
-// addresses; IPv4 keys on the full address. Best-effort on compressed IPv6 forms.
-// Reputation (store.ts) still counts the FULL resolved IP on purpose: distinct
-// addresses within a /64 are a genuine swarm signal there, so grouping them would
-// undercount the swarm.
-function connCapKey(addr: string): string {
+// addresses; IPv4 keys on the full address. Reputation (store.ts) still counts the
+// FULL resolved IP on purpose: distinct addresses within a /64 are a genuine swarm
+// signal there, so grouping them would undercount the swarm.
+//
+// The /64 is extracted by EXPANDING `::` to eight hextets, not by a naive
+// `split(':').slice(0,4)`: Node hands us the canonical COMPRESSED form, and a
+// split-based slice leaks host bits whenever the `::` starts at/before hextet 4
+// (e.g. 2001:db8::1 and 2001:db8::2 would key differently → same /64 not grouped,
+// re-opening the rotation bypass — audit N1). Expanding makes the first four
+// hextets always the network prefix regardless of zero-compression. Exported for
+// the regression test in tests/interceptor-ipkey.test.ts.
+export function connCapKey(addr: string): string {
   if (!addr) return '';
-  if (addr.includes(':')) return addr.split(':').slice(0, 4).join(':') + '::/64';
-  return addr;
+  if (!addr.includes(':')) return addr; // IPv4: full host address
+  const a = addr.split('%')[0]; // strip any IPv6 zone id (fe80::1%eth0)
+  // IPv4-mapped (::ffff:1.2.3.4) / NAT64 with embedded dotted IPv4: key the host,
+  // not a /64 (collapsing all mapped clients into one /64 bucket would over-group).
+  if (a.includes('.')) return a.toLowerCase();
+  let hextets: string[];
+  if (a.includes('::')) {
+    const [l, r] = a.split('::');
+    const lh = l ? l.split(':') : [];
+    const rh = r ? r.split(':') : [];
+    hextets = [...lh, ...Array(Math.max(0, 8 - lh.length - rh.length)).fill('0'), ...rh];
+  } else {
+    hextets = a.split(':');
+  }
+  if (hextets.length !== 8) return a.toLowerCase(); // malformed → fail safe (per-host)
+  // Normalise each network hextet (strip leading zeros / case) so every textual
+  // form of the same /64 yields one stable key.
+  return hextets.slice(0, 4).map((h) => parseInt(h || '0', 16)).join(':') + '::/64';
 }
 
 // IP rendered into logs, redacted so a full client IP (personal data) is never

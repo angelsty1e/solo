@@ -194,7 +194,7 @@ describe('contrat — le crédit résidentiel échappe au plafond forgeable', ()
 //   • ne le fait PAS quand GeoIP est down (null) — sinon un bot au comportement
 //     forgé sur une IP non résolue décrocherait 'human'.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('contrat — corroboration résidentielle : confirmé → human, GeoIP down → clean', () => {
+describe('contrat — corroboration résidentielle : confirmé → clean (human gelé D1), GeoIP down → clean', () => {
   // Client minimal : comportement organique UNIQUEMENT (comme A5). Aucun crédit
   // client non-liveness ne fire → la corroboration ne peut venir QUE du serveur.
   const organicOnlyClient = { behavioral: organicBehaviour() } as unknown as DecisionInput['client'];

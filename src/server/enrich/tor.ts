@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import readline from 'node:readline';
+import { canonicalizeIp } from './ip.js';
 
 // Tor exit list: one IPv4/IPv6 per line. The user is expected to refresh
 // this from https://check.torproject.org/torbulkexitlist on a schedule
@@ -46,8 +47,9 @@ export async function initTorList(path: string): Promise<boolean> {
     const ip = line.trim();
     if (!ip || ip.startsWith('#')) continue;
     // Reject anything that isn't a valid IPv4/IPv6 literal — keeps junk /
-    // hostile lines out of the lookup set.
-    if (net.isIP(ip) !== 0) exits.add(ip);
+    // hostile lines out of the lookup set. Store the CANONICAL form so a list
+    // entry and the socket-reported address match regardless of IPv6 spelling.
+    if (net.isIP(ip) !== 0) exits.add(canonicalizeIp(ip));
   }
   count = exits.size;
   mtime = fs.statSync(path).mtime.toISOString();
@@ -58,7 +60,8 @@ export function isTorExit(ip: string): boolean | null {
   if (!loadAttempted) return null;
   if (exits.size === 0) return null;
   if (!ip) return null;
-  return exits.has(ip);
+  // Canonicalise the lookup the same way the set was built (audit F4).
+  return exits.has(canonicalizeIp(ip));
 }
 
 export function torListStatus(): { loaded: boolean; attempted: boolean; path: string; count: number; mtime: string | null } {

@@ -345,6 +345,16 @@ function sweepExpired(): void {
   try {
     const db = getDb();
     db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(nowMs());
+    // Fold the WAL back into the main DB after the purge. secure_delete=ON zeroes
+    // freed pages in the main file, but in WAL mode the DELETE's page writes land
+    // as new -wal frames while the ORIGINAL frames (holding the expired IPs +
+    // fingerprints — personal data) linger in the -wal until a checkpoint folds
+    // and truncates it. Auto-checkpoint only fires at ~1000 pages, so on this
+    // write-light lab the expired rows could sit readable in the -wal far past the
+    // 1h TTL — undercutting the retention purge. TRUNCATE is best-effort (a
+    // concurrent reader makes it a no-op; the next 5-min sweep retries) and cheap
+    // here. (audit privacy P1 — WAL retention.)
+    db.pragma('wal_checkpoint(TRUNCATE)');
   } catch {
     // DB may be closed already during shutdown.
   }

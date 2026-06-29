@@ -41,3 +41,32 @@ export function isPrivateOrReservedIp(ip: string): boolean {
     ip.startsWith('fe80')
   );
 }
+
+// Canonical form of an IP for EXACT-MATCH lookups (the Tor exit Set). Two textual
+// spellings of the same address — compressed vs expanded IPv6, upper vs lower
+// case, IPv4-mapped (::ffff:a.b.c.d) vs dotted — must collapse to ONE string, or
+// a real Tor exit listed in one form is missed when the socket reports it in
+// another, silently voiding the ip_tor signal AND letting it satisfy the
+// residential-IP credit's `isTorExit !== true` clause (audit F4). Returns the
+// input unchanged if it isn't a recognisable IP literal (best-effort, fail-open
+// to the raw string so a match is still possible).
+export function canonicalizeIp(ip: string): string {
+  if (!ip) return ip;
+  const a = ip.split('%')[0]; // drop any IPv6 zone id (fe80::1%eth0)
+  if (!a.includes(':')) return a; // IPv4: already canonical (net.isIP rejects odd forms)
+  // IPv4-mapped IPv6 → the embedded dotted IPv4, so it matches an IPv4 list entry.
+  const mapped = a.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
+  if (mapped) return mapped[1];
+  let hextets: string[];
+  if (a.includes('::')) {
+    const [l, r] = a.split('::');
+    const lh = l ? l.split(':') : [];
+    const rh = r ? r.split(':') : [];
+    hextets = [...lh, ...Array(Math.max(0, 8 - lh.length - rh.length)).fill('0'), ...rh];
+  } else {
+    hextets = a.split(':');
+  }
+  if (hextets.length !== 8) return a.toLowerCase(); // malformed → best-effort
+  // Fully expanded, lowercase, leading-zeros stripped per hextet → one stable form.
+  return hextets.map((h) => parseInt(h || '0', 16).toString(16)).join(':');
+}
