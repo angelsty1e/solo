@@ -1,7 +1,16 @@
 # syntax=docker/dockerfile:1.7
 
+# Base image, single source of truth for BOTH stages (no builder/runtime drift).
+# Pin by digest for reproducible builds + a frozen OS-CVE surface (audit I1):
+# replace the tag below with the tag@sha256:<digest> reported by
+#   docker buildx imagetools inspect node:20-bookworm-slim
+# (pin the top-level multi-arch index digest so the right arch is still selected).
+# Until pinned, the mutable tag is used — overridable at build time with
+#   docker build --build-arg NODE_IMAGE=node:20-bookworm-slim@sha256:<digest> .
+ARG NODE_IMAGE=node:20-bookworm-slim
+
 # ─── Builder ───────────────────────────────────────────────────────────────
-FROM node:20-bookworm-slim AS builder
+FROM ${NODE_IMAGE} AS builder
 
 WORKDIR /app
 
@@ -26,7 +35,7 @@ RUN npm prune --omit=dev
 
 
 # ─── Runtime ───────────────────────────────────────────────────────────────
-FROM node:20-bookworm-slim AS runtime
+FROM ${NODE_IMAGE} AS runtime
 
 WORKDIR /app
 ENV NODE_ENV=production

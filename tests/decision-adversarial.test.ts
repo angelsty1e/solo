@@ -368,12 +368,16 @@ describe('évasion — un bot ne doit jamais décrocher human/clean', () => {
     expect(r.verdict).not.toBe('bot');
   });
 
-  it("F1bis [anti-régression] — vrai humain organique sur IP résidentielle (liveness, SANS pile forgée) reste 'human'", () => {
-    // Le pendant légitime : un humain organique dont la corroboration ne repose
-    // PAS sur une pile forgeable (uniquement comportement + IP résidentielle)
-    // garde le label positif — sinon F1 créerait une rétrogradation injuste. Le
-    // crédit non-liveness vient ici de l'ancrage SERVEUR lui-même (résidentiel),
-    // pas d'une pile cliente forgeable → forgeableCorroborated=false → 'human'.
+  it("F1bis [D1] — charge organique épurée sur IP résidentielle → 'clean', PLUS 'human'", () => {
+    // [D1] Cette charge — comportement organique (forgeable) + IP résidentielle,
+    // SANS aucun signal passif — est byte-pour-byte reproductible par un bot
+    // pilotant un vrai navigateur derrière un proxy résidentiel commercial. La
+    // garde F1 d'origine ne refusait QUE la variante rembourrée
+    // (forgeableCorroborated) et laissait passer cette variante épurée vers
+    // 'human'. Le moteur ne sait pas distinguer ce bot épuré d'un humain organique
+    // minimal (l'ancrage résidentiel fire pour les deux), donc il ne VOUCHE plus :
+    // serverCorroboratedBeyondResidentialIp est false → plafond 'clean'. Le crédit
+    // résidentiel fire toujours, mais sans vouch positif.
     const organicOnly = { behavioral: forgedOrganicBehaviour() } as unknown as DecisionInput['client'];
     const r = runDecision(
       { automation: cleanAutomation(), userAgent: CHROME_UA, tls: browserTls(), ip: ipFp(), client: organicOnly },
@@ -381,7 +385,28 @@ describe('évasion — un bot ne doit jamais décrocher human/clean', () => {
       AT,
     );
     expect(r.trustSignals.map((s) => s.id)).toContain('trust_residential_ip');
-    expect(r.verdict).toBe('human');
+    expect(r.verdict).toBe('clean');
+  });
+
+  it("F1ter [D1] — bot épuré explicite (webgl/platform vides) sur IP résidentielle ≠ 'human'", () => {
+    // La recette d'évasion confirmée par l'audit : un client forgé qui VIDE les
+    // champs passifs (webgl.renderer='', navigator.platform='') pour qu'aucun
+    // signal de confiance forgeable ni aucune pénalité N3 ne fire, en gardant un
+    // hash canvas (esquive env_render_hashes_absent) et un comportement organique.
+    // Doit retomber sur 'clean', jamais le vouch 'human'.
+    const strippedBot = {
+      navigator: { platform: '', languages: ['fr-FR'], userAgent: CHROME_UA },
+      webgl: { renderer: '', unmaskedRenderer: '', vendor: '', parametersHash: 'h' },
+      canvas: { dataUrlHash: 'c' },
+      behavioral: forgedOrganicBehaviour(),
+    } as unknown as DecisionInput['client'];
+    const r = runDecision(
+      { automation: cleanAutomation(), userAgent: CHROME_UA, tls: browserTls(), ip: ipFp(), client: strippedBot },
+      defaultConfig,
+      AT,
+    );
+    expect(r.verdict).not.toBe('human');
+    expect(r.verdict).toBe('clean');
   });
 
   it("A7 — l'omission d'une surface (canvas null) n'échappe plus à la réputation", () => {

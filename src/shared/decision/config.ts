@@ -22,7 +22,7 @@ import { signalsForLevel } from './registry.js';
 // override at runtime (see resolveConfig). The `version` is persisted with each
 // verdict so a decision can always be traced back to the rules that produced it.
 export const defaultConfig: DecisionConfig = {
-  version: 'n1n2n3n4n5-trust-2026.06.7',
+  version: 'n1n2n3n4n5-trust-2026.06.8',
   levels: [
     {
       level: 1,

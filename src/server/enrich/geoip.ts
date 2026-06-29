@@ -17,6 +17,7 @@
 import { existsSync } from 'node:fs';
 import { open, type AsnResponse, type Reader } from 'maxmind';
 import { verifyFileSha256 } from './integrity.js';
+import { isPrivateOrReservedIp } from './ip.js';
 
 let reader: Reader<AsnResponse> | null = null;
 let loadAttempted = false;
@@ -47,7 +48,11 @@ export interface GeoLookup {
 
 export function lookupAsn(ip: string): GeoLookup {
   if (!reader) return { asn: null, asnOrganization: null };
-  if (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) {
+  // Only genuinely private/reserved space is skipped. The previous inline check
+  // used `ip.startsWith('172.')`, which swallowed the public 172/8 datacenter
+  // ranges (Cloudflare/Google) and let bots there dodge ip_datacenter/ip_proxy
+  // (audit E1). isPrivateOrReservedIp scopes 172 correctly to 172.16.0.0/12.
+  if (isPrivateOrReservedIp(ip)) {
     return { asn: null, asnOrganization: null };
   }
   try {

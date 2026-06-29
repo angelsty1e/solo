@@ -662,7 +662,8 @@ describe('trust credit & human verdict', () => {
     // below review (0.25). But a proxy IP yields NO residential corroboration, so
     // the positive 'human' label is gated off (trust.serverCorroborated false) —
     // a VPN is not proof of humanity. Result: 'clean' (cleared, not vouched), and
-    // crucially never 'bot'. The residential case below keeps 'human'.
+    // crucially never 'bot'. (Since D1 the residential case below ALSO lands on
+    // 'clean': 'human' is frozen until a server signal beyond residential IP.)
     const r = runDecision(fullInput({ ip: ipFp({ isProxyHint: true }) }), defaultConfig, '2026-06-01T00:00:00.000Z');
     expect(r.verdict).toBe('clean');
   });
@@ -729,8 +730,8 @@ describe('trust credit — forgery resistance', () => {
   it('the cap does NOT push a real human escaping one VPN presumption to bot/suspect', () => {
     // Regression guard for the legitimate case: proxy 0.4 − 0.15 = 0.25 < review,
     // so the VPN human is NOT inculpated (never bot, never suspect). The positive
-    // 'human' label is reserved for a residential anchor (serverCorroborated), so
-    // on a proxy IP the right landing is 'clean' — see the trust-credit suite.
+    // 'human' label is frozen since D1 (no server signal beyond residential IP),
+    // so on a proxy IP the right landing is 'clean' — see the trust-credit suite.
     const r = runDecision(fullInput({ ip: ipFp({ isProxyHint: true }) }), defaultConfig, '2026-06-01T00:00:00.000Z');
     expect(r.verdict).toBe('clean');
     expect(r.verdict).not.toBe('bot');
@@ -741,9 +742,9 @@ describe('trust credit — forgery resistance', () => {
     // treated as a sufficient anchor. But that signal fires for a commercial
     // residential proxy too, and here the WHOLE non-liveness corroboration is the
     // forgeable client stack (real-GPU string). Residential IP being the SOLE
-    // server anchor, the positive vouch is withheld → 'clean' (never 'bot'). The
-    // label-earning path is now the minimal organic human (no forged passive
-    // stack) — locked in decision-contract.test.ts.
+    // server anchor, the positive vouch is withheld → 'clean' (never 'bot'). Since
+    // D1 there is NO label-earning path: the minimal organic human also lands on
+    // 'clean' (no server anchor beyond residential IP) — see F1bis / contract.
     const r = runDecision(fullInput(), defaultConfig, '2026-06-01T00:00:00.000Z');
     expect(r.trustSignals.find((t) => t.id === 'trust_residential_ip')).toBeDefined();
     expect(r.verdict).toBe('clean');

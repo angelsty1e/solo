@@ -207,10 +207,16 @@ describe('contrat — corroboration résidentielle : confirmé → human, GeoIP 
     );
   }
 
-  it("IP résidentielle CONFIRMÉE corrobore la liveness → 'human'", () => {
+  it("IP résidentielle CONFIRMÉE + liveness → 'clean' (plus 'human' : D1)", () => {
+    // [D1] L'ancrage résidentiel reste le SEUL signal serveur, et il fire aussi
+    // pour un bot sur proxy résidentiel commercial. Le label POSITIF 'human' est
+    // donc gelé tant qu'aucun signal serveur non-forgeable AU-DELÀ de l'IP
+    // résidentielle n'existe (serverCorroboratedBeyondResidentialIp). Le crédit
+    // est bien là (trust_residential_ip fire, score haut) mais le verdict plafonne
+    // à 'clean' — « rien contre toi », sans vouch. Jamais 'suspect'/'bot'.
     const r = run(ipFp({ isDatacenter: false, isProxyHint: false, isTorExit: false }));
     expect(r.trustSignals.map((s) => s.id)).toContain(RESIDENTIAL);
-    expect(r.verdict).toBe('human');
+    expect(r.verdict).toBe('clean');
   });
 
   it("GeoIP down (null/null/null) ne corrobore pas → 'clean', jamais 'human'", () => {

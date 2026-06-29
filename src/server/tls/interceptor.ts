@@ -83,11 +83,13 @@ let totalCaptureBytes = 0;
 const MAX_TOTAL_CONN = 4096;
 let totalConns = 0;
 
-// Per-source key for the concurrency cap. IPv6 is grouped by its /64 prefix
-// (one allocation = 2^64 addresses), so a single IPv6 client can't bypass the
-// per-IP cap by rotating addresses; IPv4 keys on the full address. Best-effort
-// on compressed IPv6 forms — it only governs a DoS cap, never a security
-// identity (rate-limit / reputation still use the full resolved IP).
+// Per-source key, shared by the concurrency cap AND the request rate-limit
+// (rateLimitKeyForSocket). IPv6 is grouped by its /64 prefix (one allocation =
+// 2^64 addresses), so a single IPv6 client can't bypass either limit by rotating
+// addresses; IPv4 keys on the full address. Best-effort on compressed IPv6 forms.
+// Reputation (store.ts) still counts the FULL resolved IP on purpose: distinct
+// addresses within a /64 are a genuine swarm signal there, so grouping them would
+// undercount the swarm.
 function connCapKey(addr: string): string {
   if (!addr) return '';
   if (addr.includes(':')) return addr.split(':').slice(0, 4).join(':') + '::/64';
@@ -232,6 +234,11 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
       // Bytes this connection currently contributes to `totalCaptureBytes`.
       // Released (subtracted) once on finalize() or cleanup(), whichever first.
       let bufferedHere = 0;
+      // The fragmented-ClientHello timer. Declared HERE (not inside the upstream
+      // 'connect' closure) so the outer cleanup() can clear it — otherwise a
+      // partial hello followed by an RST tears the connection down but leaves the
+      // timer armed, so finalize() later fires on a dead socket (audit P1).
+      let captureTimer: NodeJS.Timeout | null = null;
 
       // Single cleanup path, attached to error/close/timeout of BOTH sockets, so
       // a connection that dies at any stage frees its Map entries and tears down
@@ -239,6 +246,15 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
       const cleanup = () => {
         if (cleaned) return;
         cleaned = true;
+        // Kill any pending capture timer so finalize() can't run after teardown
+        // (partial ClientHello then RST): a stale finalize re-inserts a dead
+        // pendingByUpPort entry and pins the ~16 KB chunk buffer ~1.5 s past the
+        // byte-accounting release, transiently breaching MAX_TOTAL_CAPTURE_BYTES
+        // (audit P1).
+        if (captureTimer) {
+          clearTimeout(captureTimer);
+          captureTimer = null;
+        }
         // Release this connection's still-buffered bytes, its global slot and
         // its per-source slot.
         if (bufferedHere) {
@@ -299,7 +315,6 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
           const chunks: Buffer[] = [];
           let total = 0;
           let captured = false;
-          let captureTimer: NodeJS.Timeout | null = null;
 
           // Incremental completeness: the old code ran `Buffer.concat(chunks)` on
           // EVERY data event, so a hello fragmented into N 1-byte segments cost
@@ -318,9 +333,14 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
           };
 
           const finalize = () => {
-            if (captured) return;
+            // `cleaned` guard: if the connection was already torn down, do NOT
+            // write to the dead upstream or re-insert into pendingByUpPort (P1).
+            if (captured || cleaned) return;
             captured = true;
-            if (captureTimer) clearTimeout(captureTimer);
+            if (captureTimer) {
+              clearTimeout(captureTimer);
+              captureTimer = null;
+            }
             clientSocket.off('data', onData);
             clientSocket.setTimeout(0); // connection is now established
 
@@ -408,15 +428,20 @@ export function getRealRemoteForSocket(
   return ctxBySocket.get(socket)?.remote ?? null;
 }
 
-// Rate-limit key: the real client IP when known, else a per-connection-unique
-// token (the loopback ephemeral port). NEVER a shared constant like `req.ip`
-// (always 127.0.0.1 behind the internal proxy) — pooling every unkeyable request
-// into one bucket lets a single client drain the budget for everyone (DoS) or
-// slip its count by flip-flopping in and out of the shared bucket. Every real
-// request rides a TLS socket whose remote is resolved at 'secureConnection', so
-// a missing IP is anomalous; isolating it per connection fails safe.
+// Rate-limit key: the real client's IP bucket when known, else a per-connection-
+// unique token (the loopback ephemeral port). We key on `connCapKey` — the full
+// IPv4 address, or the IPv6 /64 PREFIX — NOT the bare address: a single IPv6
+// allocation is a /64 (2^64 addresses), so keying on the full address let one
+// client rotate source addresses to mint a fresh 120/min (and 15/min /collect)
+// budget per address, bypassing the limit on the expensive path (audit N1).
+// Grouping by /64 closes that while keeping IPv4 keyed on the exact host. NEVER a
+// shared constant like `req.ip` (always 127.0.0.1 behind the internal proxy) —
+// pooling every unkeyable request into one bucket lets a single client drain the
+// budget for everyone (DoS). Every real request rides a TLS socket whose remote
+// is resolved at 'secureConnection', so a missing IP is anomalous; isolating it
+// per connection fails safe.
 export function rateLimitKeyForSocket(socket: net.Socket | tls.TLSSocket | null | undefined): string {
   const real = getRealRemoteForSocket(socket);
-  if (real?.addr) return real.addr;
+  if (real?.addr) return connCapKey(real.addr);
   return `noip:${socket?.remotePort ?? 'unknown'}`;
 }
