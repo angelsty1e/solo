@@ -52,11 +52,11 @@ export function isPrivateOrReservedIp(ip: string): boolean {
 // to the raw string so a match is still possible).
 export function canonicalizeIp(ip: string): string {
   if (!ip) return ip;
-  const a = ip.split('%')[0]; // drop any IPv6 zone id (fe80::1%eth0)
+  const a = ip.split('%')[0] ?? ip; // drop any IPv6 zone id (fe80::1%eth0)
   if (!a.includes(':')) return a; // IPv4: already canonical (net.isIP rejects odd forms)
   // IPv4-mapped IPv6 → the embedded dotted IPv4, so it matches an IPv4 list entry.
   const mapped = a.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
-  if (mapped) return mapped[1];
+  if (mapped) return mapped[1]!;
   let hextets: string[];
   if (a.includes('::')) {
     const [l, r] = a.split('::');

@@ -1,20 +1,21 @@
 {
   "name": "solo",
-  "version": "1.5.3",
+  "version": "1.6.0",
   "private": true,
   "description": "Fingerprint Lab — TLS (JA3/JA4) + HTTP + browser + behavioral fingerprinting from scratch",
   "license": "Apache-2.0",
   "type": "module",
+  "packageManager": "pnpm@11.17.0",
   "engines": {
-    "node": ">=20.18.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "dev:client": "vite",
     "dev:server": "tsx watch src/server/index.ts",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
-    "prebuild": "npm run typecheck",
-    "build": "npm run build:client && npm run build:server",
+    "prebuild": "pnpm run typecheck",
+    "build": "pnpm run build:client && pnpm run build:server",
     "start": "node dist/server/index.js",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",

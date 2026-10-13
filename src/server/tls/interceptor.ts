@@ -100,7 +100,7 @@ let totalConns = 0;
 export function connCapKey(addr: string): string {
   if (!addr) return '';
   if (!addr.includes(':')) return addr; // IPv4: full host address
-  const a = addr.split('%')[0]; // strip any IPv6 zone id (fe80::1%eth0)
+  const a = addr.split('%')[0] ?? addr; // strip any IPv6 zone id (fe80::1%eth0)
   // IPv4-mapped (::ffff:1.2.3.4) / NAT64 with embedded dotted IPv4: key the host,
   // not a /64 (collapsing all mapped clients into one /64 bucket would over-group).
   if (a.includes('.')) return a.toLowerCase();
@@ -172,11 +172,13 @@ export function createInterceptedServerFactory(opts: InterceptedServerOptions) {
       {
         maxHeaderSize: 16 * 1024,
         requestTimeout: 30_000,
-        headersTimeout: 10_000,
         insecureHTTPParser: false,
       },
       handler,
     );
+    // Set as a property, not a createServer option: Node honours both, but the
+    // pinned @types/node (20.14.10) doesn't declare the option → tsc fails the build.
+    httpServer.headersTimeout = 10_000;
 
     const tlsServer = tls.createServer({
       ...tlsOptions,

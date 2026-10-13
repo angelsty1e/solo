@@ -3,11 +3,12 @@
 # Base image, single source of truth for BOTH stages (no builder/runtime drift).
 # Pin by digest for reproducible builds + a frozen OS-CVE surface (audit I1):
 # replace the tag below with the tag@sha256:<digest> reported by
-#   docker buildx imagetools inspect node:20-bookworm-slim
+#   docker buildx imagetools inspect node:22-bookworm-slim
 # (pin the top-level multi-arch index digest so the right arch is still selected).
 # Until pinned, the mutable tag is used — overridable at build time with
-#   docker build --build-arg NODE_IMAGE=node:20-bookworm-slim@sha256:<digest> .
-ARG NODE_IMAGE=node:20-bookworm-slim
+#   docker build --build-arg NODE_IMAGE=node:22-bookworm-slim@sha256:<digest> .
+# Node 22 minimum: pnpm 11 refuses to run below Node 22.13.
+ARG NODE_IMAGE=node:22-bookworm-slim
 
 # ─── Builder ───────────────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS builder
@@ -15,23 +16,34 @@ FROM ${NODE_IMAGE} AS builder
 WORKDIR /app
 
 # Build tools needed if better-sqlite3 can't find a prebuilt binary
-# (npm install prefers prebuilt, falls back to compile from source).
+# (its install script prefers prebuilt, falls back to compile from source).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# Install all deps (dev + prod) for the build step.
-COPY package.json package-lock.json* ./
-RUN --mount=type=cache,target=/root/.npm \
-    if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# pnpm at the exact version pinned by `packageManager` in package.json.
+# The store lives in a BuildKit cache mount (/pnpm/store), set once for every
+# step so `prune` reuses it instead of re-downloading.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && pnpm config set --global store-dir /pnpm/store
+
+# Install all deps (dev + prod) for the build step, strictly from the lockfile.
+# pnpm-workspace.yaml carries `allowBuilds` (better-sqlite3, esbuild): without
+# it pnpm 11 skips their install scripts and the native binary is missing.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN --mount=type=cache,target=/pnpm/store \
+    pnpm install --frozen-lockfile
 
 COPY tsconfig.json tsconfig.server.json tsconfig.client.json vite.config.ts ./
 COPY src ./src
 
-RUN npm run build
+RUN pnpm run build
 
 # Drop devDeps from the node_modules tree we'll copy into the runtime image.
-RUN npm prune --omit=dev
+# pnpm rebuilds node_modules for the prod-only set and asks to confirm the purge;
+# CI=true answers it (no TTY in a build) — reinstall comes from the cached store.
+RUN --mount=type=cache,target=/pnpm/store \
+    CI=true pnpm prune --prod
 
 
 # ─── Runtime ───────────────────────────────────────────────────────────────

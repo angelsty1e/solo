@@ -238,7 +238,7 @@ Le recap traduit les identifiants bruts en libellés humains **uniquement à l'a
 
 ## 🧰 Stack
 
-- **Serveur** : Node ≥ 20, **Fastify 4**, `@fastify/static`, `@fastify/helmet`, `@fastify/rate-limit`, `maxmind`, `better-sqlite3`, `zod`. Modules natifs : `net`, `tls`, `http`, `crypto`.
+- **Serveur** : Node ≥ 22.13 (pnpm 11), **Fastify 5**, `@fastify/static`, `@fastify/helmet`, `@fastify/rate-limit`, `maxmind`, `better-sqlite3`, `zod`. Modules natifs : `net`, `tls`, `http`, `crypto`.
 - **Client** : TypeScript, bundle **Vite** (multi-pages : `index.html`, `recap.html`), animations GSAP **bundlées localement**. Aucune dépendance réseau au runtime.
 - **Stockage** : **SQLite** (`better-sqlite3`, WAL) sur le volume nommé `solo-db`.
 
@@ -246,24 +246,24 @@ Le recap traduit les identifiants bruts en libellés humains **uniquement à l'a
 
 ## 👩‍💻 Développement local
 
-> Optionnel — le flux nominal est Docker. Nécessite Node ≥ 20.
+> Optionnel — le flux nominal est Docker. Nécessite Node ≥ 22.13 et pnpm 11 (`corepack enable` suffit : la version est figée par `packageManager`).
 
 ```bash
-npm install
-npm run dev:server                 # tsx watch
-npm run build:client -- --watch    # dans un autre terminal
+pnpm install
+pnpm run dev:server                 # tsx watch
+pnpm run build:client --watch       # dans un autre terminal
 ```
 
 Qualité :
 
 ```bash
-npm run typecheck
-npm test            # vitest : parsers JA3/JA4, ClientHello, incohérences HTTP, décision
-npm run lint
-npm run format
+pnpm run typecheck
+pnpm test           # vitest : parsers JA3/JA4, ClientHello, incohérences HTTP, décision
+pnpm run lint
+pnpm run format
 ```
 
-Pour un run local hors Docker, génère un certificat dans `certs/` (cf. [étape 1](#1-optionnel-générer-ton-certificat-tls) ou `mkcert -key-file certs/key.pem -cert-file certs/cert.pem localhost 127.0.0.1 ::1`) puis `npm run build && npm start`.
+Pour un run local hors Docker, génère un certificat dans `certs/` (cf. [étape 1](#1-optionnel-générer-ton-certificat-tls) ou `mkcert -key-file certs/key.pem -cert-file certs/cert.pem localhost 127.0.0.1 ::1`) puis `pnpm run build && pnpm start`.
 
 ---
 
@@ -275,7 +275,7 @@ Pour valider tes JA3/JA4, compare ton `/api/fp/me` avec :
 - https://tlsfingerprint.io
 - https://browserleaks.com/tls
 
-La suite `npm test` couvre le parseur ClientHello, la dérivation JA3/JA4 (filtrage GREASE inclus), la détection d'incohérences HTTP et le moteur de décision.
+La suite `pnpm test` couvre le parseur ClientHello, la dérivation JA3/JA4 (filtrage GREASE inclus), la détection d'incohérences HTTP et le moteur de décision.
 
 ---
 

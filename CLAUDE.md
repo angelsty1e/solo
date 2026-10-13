@@ -9,45 +9,62 @@ _À compléter._
 
 ## Commandes
 
+Gestionnaire de paquets : **pnpm 11** (version figée par `packageManager`, `corepack enable`),
+Node ≥ 22.13. `pnpm-workspace.yaml` porte `allowBuilds` (better-sqlite3, esbuild) — sans lui
+pnpm 11 saute leurs scripts d'install et le binaire natif manque.
+
 ```bash
-# TODO: build / test / lint / démarrage
+docker compose up -d --build        # flux nominal (Docker Desktop sur le Mac, ou LXC)
+pnpm run typecheck && pnpm test && pnpm run lint && pnpm run build
 ```
+
+Pas d'install dans l'arbre du Mac : la suite se joue dans un conteneur jetable sur une copie —
+`docker run --rm -e CI=true -v "$PWD":/src:ro node:22-bookworm-slim sh -c 'cp -r /src /w && cd /w && rm -rf node_modules && corepack enable && pnpm install --frozen-lockfile && pnpm test'`
+(better-sqlite3 a un prébuilt Node 22 : pas besoin de `g++`).
 
 ## Conventions
 
 _À compléter._
 
-## Déploiement — items en attente (hors-LXC)
+## Déploiement — items en attente
 
-Checklist vivante des actions qui ne peuvent **pas** se faire en local (npm/docker/réseau
-indisponibles, build uniquement sur le serveur). Tenir à jour à chaque résolution.
+Checklist vivante. Tenir à jour à chaque résolution.
 
 - **I1 — Pinning de l'image Docker par digest.** ⏳ _en attente du digest._ Le Dockerfile
-  expose déjà `ARG NODE_IMAGE` (défaut = tag mutable `node:20-bookworm-slim`, build non cassé).
+  expose déjà `ARG NODE_IMAGE` (défaut = tag mutable `node:22-bookworm-slim`, build non cassé).
   Récupérer le digest puis sceller le défaut :
   ```bash
-  docker buildx imagetools inspect node:20-bookworm-slim   # lire « Digest: sha256:… » (index multi-arch)
-  # → ARG NODE_IMAGE=node:20-bookworm-slim@sha256:<digest>   (dans Dockerfile)
+  docker buildx imagetools inspect node:22-bookworm-slim   # lire « Digest: sha256:… » (index multi-arch)
+  # → ARG NODE_IMAGE=node:22-bookworm-slim@sha256:<digest>   (dans Dockerfile)
   ```
-- **I2 — Lockfile committé.** ⏳ _non fait (npm non exécutable en local)._ Le Dockerfile bascule
-  automatiquement sur `npm ci` dès que `package-lock.json` est présent (`.dockerignore` ne l'exclut
-  pas). À lancer une fois sur une machine avec npm + réseau :
-  ```bash
-  npm install --package-lock-only && git add package-lock.json && git commit -m "Add package-lock.json (audit I2)"
-  ```
-- **Fastify 5.** ⏳ _déps bumpées dans `package.json` (fastify 5.2.1 / helmet 13 / rate-limit 10 /
-  static 8), à VALIDER sur LXC avant de figer._ Aucun changement de code applicatif attendu (API
-  utilisées stables en v5). Confirmer les majeurs de plugins (`npm info <pkg> peerDependencies` →
-  exiger `fastify@5`), puis `npm run typecheck && test && build` + smoke-test du boot TLS
-  (`serverFactory`). **Version d'app non bumpée** : passer à **1.6.0** + entrée changelog une fois
-  le build vert.
+- **I2 — Lockfile committé.** ✅ _fait en 1.6.0_ : `pnpm-lock.yaml`, consommé en
+  `pnpm install --frozen-lockfile` par le Dockerfile.
+- **Fastify 5.** ✅ _validé en 1.6.0 sous Docker_ (typecheck + build + boot TLS `serverFactory` +
+  smoke-test). Reste à le déployer sur le LXC.
+- **2 tests rouges préexistants** (jamais exécutés avant 1.6.0, identiques sous Node 20 et 22) :
+  ⏳ `F1ter [D1]` ([decision-adversarial.test.ts](tests/decision-adversarial.test.ts)) →
+  `TypeError` sur `uaData.brands` : [environment.ts](src/shared/decision/environment.ts) ne garde
+  que `uaData === null`, pas `undefined` ; `list()` ([store.test.ts](tests/store.test.ts)) → le
+  test lit à T0+90 min une session créée à T0+30 min (expire à T0+90 min, borne `expires_at > now`
+  stricte) : erreur de borne dans le TEST.
 - **SHA-256 des bases MaxMind.** ⏳ _opt-in non renseigné._ Remplir `GEOIP_DB_SHA256` /
   `GEOIP_COUNTRY_DB_SHA256` dans `.env` (`sha256sum data/GeoLite2-*.mmdb`) → pinning fail-closed.
 
-> Avant tout déploiement : `npm run typecheck && npm run test && npm run lint && npm run format`
-> sur le serveur (non exécutables en local — cf. [[feedback_no_local_install]]).
+> Avant tout déploiement : `pnpm run typecheck && pnpm test && pnpm run lint && pnpm run format`
+> (dans un conteneur, cf. Commandes).
 
 ## Changelog
+
+- **1.6.0** — **Passage npm → pnpm 11, image Node 22, Fastify 5 validé.** Le projet s'installait avec npm sans lockfile (`npm install` → dépendances transitives différentes à chaque build) alors que le poste est pnpm-only.
+  - **pnpm** : `packageManager: pnpm@11.17.0` + scripts `prebuild`/`build` en `pnpm run` ([package.json](package.json)) ; [pnpm-workspace.yaml](pnpm-workspace.yaml) approuve les builds de `better-sqlite3` et `esbuild` ; **lockfile `pnpm-lock.yaml` committé** (ferme I2). [Dockerfile](Dockerfile) : `corepack enable`, store pnpm dans un cache BuildKit (`/pnpm/store`, fixé globalement pour que `prune` le réutilise), `pnpm install --frozen-lockfile`, puis `CI=true pnpm prune --prod` (sans `CI`, pnpm refuse de purger `node_modules` faute de TTY). Image finale : 7 dépendances de prod, 38 Mo de `node_modules`.
+  - **Node 20 → 22** (`ARG NODE_IMAGE=node:22-bookworm-slim`, `engines` ≥ 22.13) : pnpm 11 refuse de tourner sous 22.13 ; Node 20 est en fin de vie depuis avril 2026. 22 plutôt que 24 : better-sqlite3 11.3.0 a un prébuilt Node 22, pas Node 24.
+  - **Docs** : commandes du [README](README.md) et messages « Client bundle missing » ([routes.ts](src/server/routes.ts)) en pnpm ; section Commandes de ce fichier remplie.
+  - **Vérifié** (Docker Desktop, Mac) : build vert, conteneur `healthy` sous Node 22.23.3, `/healthz` 200 `db:true`, `/` 200, JA3 capturé sur `/api/fp/me`. **Première exécution de la suite** : 308/310 verts, lint 0 erreur (1 warning `httpFp` inutilisé) ; les **2 rouges sont préexistants** et identiques sous Node 20 → détail dans « items en attente ». **Déploiement LXC** : rebuild de l'image requis (changement de Node) ; aucun changement de schéma DB.
+
+- **1.5.4** — **Build Docker réparé : le typecheck bloquait `npm run build`.** `docker compose up --build` échouait dans l'étape builder parce que `prebuild` lance `tsc --noEmit` et que le code des correctifs 1.5.2/1.5.3 n'avait jamais été compilé (« non exécutable en local »). Deux causes, corrigées sans changement de comportement :
+  - **`noUncheckedIndexedAccess`** : `split('%')[0]` et le groupe de regex IPv4-mapped sont typés `string | undefined` → `?? addr` / `mapped[1]!` dans `canonicalizeIp` ([ip.ts](src/server/enrich/ip.ts)) et `connCapKey` ([interceptor.ts](src/server/tls/interceptor.ts)).
+  - **`headersTimeout`** : option de `http.createServer` bien honorée par Node 20 (vérifié dans `node:20-bookworm-slim`, v20.20.2), mais absente des types de `@types/node` 20.14.10 épinglé → posée en propriété `httpServer.headersTimeout = 10_000` après création ([interceptor.ts](src/server/tls/interceptor.ts)).
+  - **Vérifié** sur Docker Desktop (Mac, Compose v5.6.0) : build vert, conteneur `healthy` sans redémarrage, `/` 200, bundle `/assets/*.js` 200, `/healthz` `db:true`, `/api/fp/me` renvoie l'empreinte TLS 1.3 (JA3). **Non vérifié** : la suite vitest (bloquée par le hook pnpm-only du poste) — à jouer dans un conteneur `node:20-bookworm-slim` sur une copie du dépôt. Docker est disponible sur ce Mac depuis le 2026-10-13 : la mention « docker indisponible » des items en attente ne vaut plus.
 
 - **1.5.3** — **Durcissements 🟡 d'enrichissement / rétention.** Trois findings d'audit basse-sévérité fermés (aucun ne touche le moteur de décision : config inchangée `2026.06.8`).
   - **Tor IPv6 (F4)** : `isTorExit` faisait un match exact de chaîne, donc un exit IPv6 listé dans une forme (étendue / casse / IPv4-mapped) ratait quand le socket le rapportait dans une autre → `ip_tor` silencieusement annulé **et** clause `isTorExit !== true` du crédit résidentiel satisfaite à tort. Nouveau `canonicalizeIp` (expansion `::` → 8 hextets, casse, IPv4-mapped → IPv4 pointé) appliqué des **deux** côtés (construction du Set + lookup) ([ip.ts](src/server/enrich/ip.ts), [tor.ts](src/server/enrich/tor.ts)). Régression [enrich-ip.test.ts](tests/enrich-ip.test.ts).

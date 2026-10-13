@@ -1,0 +1,6 @@
+# pnpm 11 n'exécute que les scripts d'install explicitement approuvés.
+#   - better-sqlite3 : télécharge son binaire natif prébuilt (ou le compile).
+#   - esbuild        : pose le binaire de sa plate-forme (utilisé par vite/tsx).
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true

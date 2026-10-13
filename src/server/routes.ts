@@ -143,7 +143,7 @@ export async function registerRoutes(app: FastifyInstance, opts: RouteOptions): 
   app.get('/', async (_req, reply) => {
     const indexPath = path.join(clientDir, 'index.html');
     if (!fs.existsSync(indexPath)) {
-      reply.code(503).type('text/plain').send('Client bundle missing. Run `npm run build`.');
+      reply.code(503).type('text/plain').send('Client bundle missing. Run `pnpm run build`.');
       return;
     }
     reply.type('text/html').send(fs.readFileSync(indexPath, 'utf8'));
@@ -154,7 +154,7 @@ export async function registerRoutes(app: FastifyInstance, opts: RouteOptions): 
     // capability-protected /api/fp/:id below.
     const recapPath = path.join(clientDir, 'recap.html');
     if (!fs.existsSync(recapPath)) {
-      reply.code(503).type('text/plain').send('Client bundle missing. Run `npm run build`.');
+      reply.code(503).type('text/plain').send('Client bundle missing. Run `pnpm run build`.');
       return;
     }
     reply.type('text/html').send(fs.readFileSync(recapPath, 'utf8'));
