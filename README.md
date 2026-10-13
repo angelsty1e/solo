@@ -33,12 +33,16 @@ Le tout alimente un **moteur de décision déterministe** qui rend un verdict `b
 
 ## 🚀 Démarrage rapide
 
-**Pré-requis :** Docker + Docker Compose. Rien d'autre.
-Sur Windows : **Docker Desktop avec le backend WSL2** (lire la [section Windows](#-windows--wsl--à-lire)).
+**Pré-requis :** Docker + Docker Compose. Rien d'autre — ni Node, ni pnpm, ni **openssl** sur ta machine : tout est dans l'image.
+
+| Système | Mise en place |
+| --- | --- |
+| **macOS / Linux** | Docker installé → étapes 2 à 4 ci-dessous, c'est tout. |
+| **Windows** | Plus d'étapes (WSL2, Docker Desktop, fins de ligne Git) : suis le **[pas-à-pas Windows](#-windows--wsl--à-lire)**, puis reviens à l'étape 3. |
 
 ### 1. (Optionnel) Générer ton certificat TLS
 
-solo génère **automatiquement** un certificat self-signed au premier démarrage : tu peux sauter cette étape. Génère le tien seulement si tu veux contrôler le CN ou réutiliser un certificat existant. Dépose-le dans `./certs/` **avant** le `docker compose up`.
+solo génère **automatiquement** un certificat self-signed au premier démarrage, **dans le conteneur** (openssl y est installé) : tu peux sauter cette étape, et c'est **ce qu'il faut faire sous Windows**. Génère le tien seulement si tu veux contrôler le CN ou réutiliser un certificat existant. Dépose-le dans `./certs/` **avant** le `docker compose up`.
 
 <details open>
 <summary><b>macOS / Linux</b> (et Windows via Git Bash)</summary>
@@ -54,7 +58,9 @@ chmod 600 certs/key.pem
 </details>
 
 <details>
-<summary><b>Windows — PowerShell</b></summary>
+<summary><b>Windows — PowerShell</b> (seulement si tu tiens à ton propre certificat)</summary>
+
+Windows n'a **pas d'`openssl` de base** : la commande ci-dessous échoue telle quelle (`openssl : Le terme « openssl » n'est pas reconnu…`). Le plus simple reste de **ne rien générer** et de laisser le conteneur le faire.
 
 ```powershell
 mkdir certs -Force
@@ -64,10 +70,10 @@ openssl req -x509 -newkey rsa:2048 -nodes `
   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1"
 ```
 
-> Pas d'`openssl` sous Windows ? Trois options :
+> Pour avoir `openssl` sous Windows malgré tout :
 > - **Git for Windows** : ouvre **Git Bash** et lance la commande macOS/Linux ci-dessus (openssl est inclus) ;
-> - `winget install ShiningLight.OpenSSL.Light` puis rouvre le terminal ;
-> - ou ne génère rien : solo crée le certificat tout seul au démarrage.
+> - `winget install ShiningLight.OpenSSL.Light`, puis **ferme et rouvre** le terminal (le `PATH` n'est relu qu'à l'ouverture) ;
+> - **mkcert** (`winget install FiloSottile.mkcert`) : certificat reconnu par ton navigateur, sans avertissement — `mkcert -install` puis `mkcert -key-file certs\key.pem -cert-file certs\cert.pem localhost 127.0.0.1 ::1`.
 </details>
 
 ### 2. Lancer
@@ -94,8 +100,10 @@ Le certificat est self-signed : le navigateur affiche un avertissement à accept
 ```bash
 docker compose ps          # STATUS doit passer "healthy"
 curl -k https://localhost:8443/healthz
-# {"status":"ok","version":"1.4.2","db":true,"geoip":{...},...}
+# {"status":"ok","version":"1.6.1","db":true,"geoip":{...},...}
 ```
+
+> Sous **Windows PowerShell**, `curl` est un alias d'`Invoke-WebRequest` et ne connaît pas `-k` : tape **`curl.exe`** -k https://localhost:8443/healthz.
 
 ---
 
@@ -120,21 +128,60 @@ Sans ces fichiers le serveur démarre normalement, mais l'ASN/pays/Tor renvoient
 
 puis `docker compose restart`.
 
-> **Intégrité (optionnel, fail-closed).** Renseigne `GEOIP_DB_SHA256` / `GEOIP_COUNTRY_DB_SHA256` dans `.env` pour qu'une base `.mmdb` altérée refuse de se charger. Calcul : `sha256sum data/GeoLite2-*.mmdb`.
+> **Intégrité (optionnel, fail-closed).** Renseigne `GEOIP_DB_SHA256` / `GEOIP_COUNTRY_DB_SHA256` dans `.env` pour qu'une base `.mmdb` altérée refuse de se charger. Calcul : `sha256sum data/GeoLite2-*.mmdb` (macOS : `shasum -a 256`, PowerShell : `Get-FileHash data\GeoLite2-ASN.mmdb` — la casse de l'empreinte est indifférente).
 
 ---
 
 ## 🪟 Windows / WSL — à lire
 
-solo tourne dans un conteneur **Linux** ; or les systèmes de fichiers Windows partagés dans WSL (`C:\…` → `/mnt/c/…`, protocole 9p/DrvFs) **n'implémentent pas les permissions Unix ni le `mmap`**. Deux conséquences historiques, **toutes deux corrigées** :
+Sous macOS et Linux, solo se lance en une commande. **Sous Windows, il y a plus d'étapes** : Docker n'y tourne pas nativement (il passe par une VM Linux, WSL2), le système n'a **pas d'`openssl`**, Git convertit les fins de ligne, et PowerShell ne se comporte pas comme un shell Unix. Suis les étapes dans l'ordre : chacune ferme une source de bug connue.
 
-| Symptôme | Cause | Correctif intégré |
+### Pas-à-pas
+
+1. **Activer WSL2** — PowerShell **en administrateur** :
+   ```powershell
+   wsl --install
+   ```
+   puis **redémarre** Windows. Erreur `0x80370102` → la virtualisation est désactivée dans le BIOS/UEFI (Intel VT-x / AMD-V) : active-la et recommence.
+2. **Installer Docker Desktop** — `winget install Docker.DockerDesktop` (ou l'installeur de docker.com), puis lance-le. Dans *Settings → General*, **« Use the WSL 2 based engine »** doit être coché. Attends que le bas de la fenêtre indique **Engine running**.
+3. **Ouvrir un NOUVEAU terminal** et vérifier :
+   ```powershell
+   docker version          # doit afficher une section « Server: »
+   docker compose version
+   ```
+   Un terminal ouvert **avant** l'installation ne voit pas Docker (le `PATH` n'est lu qu'à l'ouverture).
+4. **Installer Git et cloner** — `winget install Git.Git`, nouveau terminal, puis :
+   ```powershell
+   git clone <repo> solo
+   cd solo
+   ```
+   Le `.gitattributes` du dépôt force les fins de ligne **LF** sur `entrypoint.sh` et le `Dockerfile` : ne le supprime pas, et ne copie pas ces fichiers depuis un éditeur réglé en CRLF.
+5. **Ne génère pas de certificat** : pas besoin d'`openssl` sur Windows, le conteneur crée le sien au premier démarrage.
+6. **Lancer** :
+   ```powershell
+   docker compose up -d --build
+   docker compose ps                              # attendre « healthy »
+   curl.exe -k https://localhost:8443/healthz     # curl.exe, pas curl (alias PowerShell)
+   ```
+7. **Ouvrir** https://localhost:8443 et accepter l'avertissement du certificat self-signed.
+
+> **Performances.** `docker compose up` marche depuis n'importe quel dossier `C:\…`, mais les I/O sont plus rapides si tu clones le projet **dans WSL** (`wsl`, puis `git clone <repo> ~/solo` et les commandes macOS/Linux depuis là).
+
+### Dépannage Windows
+
+| Symptôme | Cause | Que faire |
 | --- | --- | --- |
-| `exec /entrypoint.sh: no such file or directory` | shebang converti en CRLF au `git checkout` Windows | `.gitattributes` force LF + le `Dockerfile` neutralise le CR au build |
-| `Restarting (1)` en boucle (clé privée non sécurisable en `0600`) | `chmod` ignoré par DrvFs → le garde-fou refusait de démarrer | garde-fou dégradé en **avertissement** pour un cert self-signed localhost |
-| `disk I/O error` SQLite (si la base était sur `/mnt/c`) | mode **WAL** (`-shm` + `mmap`) impossible sur 9p | la base vit désormais sur un **volume Docker nommé** (`solo-db`), jamais sur le disque hôte |
+| `docker : Le terme « docker » n'est pas reconnu…` | terminal ouvert avant l'installation de Docker Desktop | fermer et **rouvrir** le terminal |
+| `error during connect … dockerDesktopLinuxEngine … cannot find the file specified` | Docker Desktop n'est pas lancé, ou son moteur est arrêté | lancer Docker Desktop, attendre **Engine running** |
+| `openssl : Le terme « openssl » n'est pas reconnu…` | Windows n'a pas d'openssl | rien à faire : **saute l'étape 1**, le conteneur génère le certificat |
+| Le build échoue sur `RUN pnpm run build` (`exit code: 2`) | erreur TypeScript : le `prebuild` lance le typecheck, qui bloque le build (cause du bug Windows corrigé en 1.5.4) | voir l'erreur complète avec `docker compose build --progress=plain` |
+| `Ports are not available: exposing port TCP 0.0.0.0:8443 … forbidden by its access permissions` | le port 8443 tombe dans une plage réservée par Hyper-V/WinNAT (`netsh interface ipv4 show excludedportrange protocol=tcp`) | changer le port **de gauche** dans `docker-compose.yml` (`"9443:8443"`) et ouvrir https://localhost:9443 — ou, en admin, `net stop winnat` puis `net start winnat` |
+| `curl -k` → `Impossible de trouver un paramètre correspondant au nom « k »` | `curl` est un alias d'`Invoke-WebRequest` dans Windows PowerShell | taper `curl.exe` |
+| `exec /entrypoint.sh: no such file or directory` | shebang converti en CRLF au `git checkout` Windows | **corrigé** : `.gitattributes` force LF + le `Dockerfile` neutralise le CR au build |
+| `Restarting (1)` en boucle (clé privée non sécurisable en `0600`) | `chmod` ignoré par le partage `C:\` → WSL (9p/DrvFs, sans permissions Unix) | **corrigé** : garde-fou dégradé en **avertissement** pour un cert self-signed localhost |
+| `disk I/O error` SQLite (base sur `/mnt/c`) | mode **WAL** (`-shm` + `mmap`) impossible sur 9p | **corrigé** : la base vit sur un **volume Docker nommé** (`solo-db`), jamais sur le disque hôte |
 
-➡️ **Résultat : `docker compose up -d` fonctionne depuis n'importe quel dossier Windows.** Pour de **meilleures performances d'I/O**, tu peux quand même cloner le projet dans le système de fichiers natif WSL (`~/solo`) plutôt que sous `C:\`.
+En cas de doute, les journaux disent presque toujours la cause : `docker compose logs solo`.
 
 ---
 
@@ -247,6 +294,8 @@ Le recap traduit les identifiants bruts en libellés humains **uniquement à l'a
 ## 👩‍💻 Développement local
 
 > Optionnel — le flux nominal est Docker. Nécessite Node ≥ 22.13 et pnpm 11 (`corepack enable` suffit : la version est figée par `packageManager`).
+>
+> **Sous Windows, développe dans WSL** (Ubuntu : `wsl`, puis Node et pnpm installés côté Linux), pas dans PowerShell : le serveur et les scripts supposent un environnement Unix, et `better-sqlite3` est un module natif — compilé pour Windows, le `node_modules` n'est pas réutilisable dans le conteneur ni dans WSL.
 
 ```bash
 pnpm install
